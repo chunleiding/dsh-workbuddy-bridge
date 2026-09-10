@@ -2,7 +2,7 @@
  * WorkBuddy model catalog: a static fallback list captured from the live
  * endpoint, replaced by the upstream's dynamic answer once it loads.
  *
- * @module dsh-workbuddy-connect/catalog
+ * @module dsh-workbuddy-bridge/catalog
  */
 
 import type { WorkBuddyUpstreamModel } from './upstream.ts'

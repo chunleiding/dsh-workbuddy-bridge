@@ -47,30 +47,30 @@
 | **0.3.0+** | `0.1.2-rc.1` 及以上 | 建议 `2.0.5`+ |
 | **0.2.6** | `0.1.1-rc.2`（旧线） | `2.0.3` / `2.0.4` |
 
-- DSH `0.1.2-rc.1` 及以上的用户，正常安装最新版即可：`dsh plugin --profile web add dsh-workbuddy-connect`
-- 还在用 DSH `0.1.1-rc.2` 的用户，请安装旧版本并停留在 `0.2.6`：`dsh plugin --profile web add dsh-workbuddy-connect@0.2.6`
+- DSH `0.1.2-rc.1` 及以上的用户，正常安装最新版即可：`dsh plugin --profile web add dsh-workbuddy-bridge`
+- 还在用 DSH `0.1.1-rc.2` 的用户，请安装旧版本并停留在 `0.2.6`：`dsh plugin --profile web add dsh-workbuddy-bridge@0.2.6`
 
 插件在三种 DSH 界面下均可运行：**Web**、**Desktop**、**TUI**。根据你使用的 profile 选对应命令安装。
 
 ```sh
 # Web（推荐，自带预构建产物）
-dsh plugin --profile web add dsh-workbuddy-connect
+dsh plugin --profile web add dsh-workbuddy-bridge
 dsh web
 
 # 或从 GitHub 源码安装 Web 版
-dsh plugin --profile web add github:corrinehu/dsh-workbuddy-connect
+dsh plugin --profile web add github:chunleiding/dsh-workbuddy-bridge
 dsh web
 ```
 
 ```sh
 # Desktop（DSH Desktop 桌面版）
-dsh plugin --profile desktop add dsh-workbuddy-connect
+dsh plugin --profile desktop add dsh-workbuddy-bridge
 dsh --profile desktop
 ```
 
 ```sh
 # TUI（终端界面）
-dsh plugin --profile dsh-tui add dsh-workbuddy-connect
+dsh plugin --profile dsh-tui add dsh-workbuddy-bridge
 dsh --profile dsh-tui
 ```
 
@@ -82,7 +82,7 @@ dsh --profile dsh-tui
 
 ## 命令行
 
-`dsh plugin --profile <web|desktop|dsh-tui> exec dsh-workbuddy-connect status`：登录状态与剩余积分（`--json` 输出机器可读格式；另有 `doctor` 诊断、`logout` 清理凭据）。
+`dsh plugin --profile <web|desktop|dsh-tui> exec dsh-workbuddy-bridge status`：登录状态与剩余积分（`--json` 输出机器可读格式；另有 `doctor` 诊断、`logout` 清理凭据）。
 
 ## 已知限制
 

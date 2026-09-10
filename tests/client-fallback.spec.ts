@@ -37,14 +37,14 @@ describe('client card fallback', () => {
     function apply(ctx: any): void {
       try {
         const namespace = 'settings.workbuddy'
-        ctx.effect(() => ctx.locale.register(namespace, { zh: {}, en: {} }), 'dsh-workbuddy-connect: settings copy')
+        ctx.effect(() => ctx.locale.register(namespace, { zh: {}, en: {} }), 'dsh-workbuddy-bridge: settings copy')
         const t = ctx.locale.bind(namespace)
         ctx.slots.inject('settings.plugin.item', () => {
           throw new Error('not reached')
         })
         void t
       } catch (error: unknown) {
-        console.error('[dsh-workbuddy-connect] client card failed to load (host provider unaffected):', error)
+        console.error('[dsh-workbuddy-bridge] client card failed to load (host provider unaffected):', error)
       }
     }
 

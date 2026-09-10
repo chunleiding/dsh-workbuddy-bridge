@@ -3,7 +3,7 @@
  * into the Harness LLM seam, assembled from public `dsh-llm-pi-ai`
  * extension points the way `dsh-codex-connect` assembles its Codex route.
  *
- * @module dsh-workbuddy-connect/adapter
+ * @module dsh-workbuddy-bridge/adapter
  */
 
 import { createProvider } from '@earendil-works/pi-ai'
@@ -48,7 +48,7 @@ const INERT_AUTH: { credentials: CredentialStore; authContext: AuthContext } = {
     async read() { return undefined },
     async list() { return [] },
     async modify() {
-      throw new Error('dsh-workbuddy-connect: the workbuddy route has no pi-ai credential lifecycle')
+      throw new Error('dsh-workbuddy-bridge: the workbuddy route has no pi-ai credential lifecycle')
     },
     async delete() {},
   },
@@ -232,8 +232,14 @@ export function createWorkBuddyAdapter(options: WorkBuddyAdapterOptions): WorkBu
     provider: WORKBUDDY_PROVIDER,
     displayName: 'WorkBuddy',
     streamIdleTimeoutMs: WORKBUDDY_STREAM_IDLE_TIMEOUT_MS,
-    retryPolicy: resolveRetryPolicy(undefined, 'dsh-workbuddy-connect retryPolicy'),
+    retryPolicy: resolveRetryPolicy(undefined, 'dsh-workbuddy-bridge retryPolicy'),
     configuredMaxTokens: new Map(),
+    // `dsh-llm-pi-ai` reads this field unconditionally in `modelOf()`, and its
+    // type marks it required. This plugin resolves its own catalog and never
+    // pre-registers a failed model, so an empty map is the correct value:
+    // omitting it makes every `resolveModel()` call throw
+    // "Cannot read properties of undefined (reading 'get')" on DSH >= 0.1.5.
+    modelErrors: new Map(),
     ...REQUEST_IMAGE_BUDGETS,
     piProvider: provider,
   }

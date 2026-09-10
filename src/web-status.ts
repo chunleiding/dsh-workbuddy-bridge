@@ -3,7 +3,7 @@
  * token expiry, and remaining credit, fetched by the browser half. The route
  * answers loopback browser requests only and never carries token material.
  *
- * @module dsh-workbuddy-connect/web-status
+ * @module dsh-workbuddy-bridge/web-status
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -133,5 +133,5 @@ export function registerWorkBuddyStatusRoute(ctx: Context, deps: WorkBuddyStatus
     return () => {
       dispose()
     }
-  }, 'dsh-workbuddy-connect: Web status route')
+  }, 'dsh-workbuddy-bridge: Web status route')
 }

@@ -1,7 +1,7 @@
 /** Node-free constants and types shared by the Host and browser halves. */
 
 /** Plugin-owned status endpoint consumed by its browser half. */
-export const WORKBUDDY_STATUS_PATH = '/plugins/dsh-workbuddy-connect/status'
+export const WORKBUDDY_STATUS_PATH = '/plugins/dsh-workbuddy-bridge/status'
 
 /** One billing package and its remaining credit. */
 export interface WorkBuddyWebCreditAccount {

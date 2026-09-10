@@ -37,30 +37,30 @@ Prerequisite: the WorkBuddy desktop app is installed and signed in (the plugin r
 | **0.3.0+** | `0.1.2-rc.1` or newer | `2.0.5`+ recommended |
 | **0.2.6** | `0.1.1-rc.2` (older line) | `2.0.3` / `2.0.4` |
 
-- On DSH `0.1.2-rc.1` or newer, just install the latest: `dsh plugin --profile web add dsh-workbuddy-connect`
-- Still on DSH `0.1.1-rc.2`? Stay on the older release: `dsh plugin --profile web add dsh-workbuddy-connect@0.2.6`
+- On DSH `0.1.2-rc.1` or newer, just install the latest: `dsh plugin --profile web add dsh-workbuddy-bridge`
+- Still on DSH `0.1.1-rc.2`? Stay on the older release: `dsh plugin --profile web add dsh-workbuddy-bridge@0.2.6`
 
 The plugin runs under all three DSH interfaces: **Web**, **Desktop**, and **TUI**. Pick the install command that matches the profile you use.
 
 ```sh
 # Web (recommended; ships prebuilt artifacts)
-dsh plugin --profile web add dsh-workbuddy-connect
+dsh plugin --profile web add dsh-workbuddy-bridge
 dsh web
 
 # or install the Web version from the GitHub source
-dsh plugin --profile web add github:corrinehu/dsh-workbuddy-connect
+dsh plugin --profile web add github:chunleiding/dsh-workbuddy-bridge
 dsh web
 ```
 
 ```sh
 # Desktop (the DSH Desktop app)
-dsh plugin --profile desktop add dsh-workbuddy-connect
+dsh plugin --profile desktop add dsh-workbuddy-bridge
 dsh --profile desktop
 ```
 
 ```sh
 # TUI (terminal UI)
-dsh plugin --profile dsh-tui add dsh-workbuddy-connect
+dsh plugin --profile dsh-tui add dsh-workbuddy-bridge
 dsh --profile dsh-tui
 ```
 
@@ -72,7 +72,7 @@ After installing, switch to a WorkBuddy model in the model picker of the interfa
 
 ## CLI
 
-`dsh plugin --profile <web|desktop|dsh-tui> exec dsh-workbuddy-connect status`: sign-in state and remaining credit (`--json` for machine-readable output; `doctor` for diagnostics and `logout` for credential cleanup are also available).
+`dsh plugin --profile <web|desktop|dsh-tui> exec dsh-workbuddy-bridge status`: sign-in state and remaining credit (`--json` for machine-readable output; `doctor` for diagnostics and `logout` for credential cleanup are also available).
 
 ## Known limitations
 

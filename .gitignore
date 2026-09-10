@@ -3,3 +3,7 @@ coverage/
 *.log
 .DS_Store
 AGENTS.md
+# Local-only, from building this checkout with npm inside a sandbox that
+# blocks pnpm's symlink layout. The canonical lockfile is pnpm-lock.yaml.
+.npm-cache/
+package-lock.json

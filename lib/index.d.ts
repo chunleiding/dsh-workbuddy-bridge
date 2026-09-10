@@ -349,7 +349,7 @@ declare function createWorkBuddyAdapter(options: WorkBuddyAdapterOptions): WorkB
  * This asymmetry is intentional: the host is the load-bearing half, and
  * a missing heartbeat unambiguously means the host never started.
  *
- * @module dsh-workbuddy-connect/host-heartbeat
+ * @module dsh-workbuddy-bridge/host-heartbeat
  */
 /** Basename of the host heartbeat file inside the Harness home. */
 declare const WORKBUDDY_HOST_HEARTBEAT_FILENAME = ".workbuddy-host-heartbeat.json";
@@ -358,7 +358,7 @@ declare const HEARTBEAT_FORMAT_VERSION = 1;
 /** On-disk shape of the heartbeat. */
 interface WorkBuddyHostHeartbeat {
   version: typeof HEARTBEAT_FORMAT_VERSION;
-  package: 'dsh-workbuddy-connect';
+  package: 'dsh-workbuddy-bridge';
   pluginVersion: string;
   /** Epoch milliseconds when the host registered the provider. */
   registeredAt: number;

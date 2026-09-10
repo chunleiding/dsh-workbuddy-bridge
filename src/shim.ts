@@ -12,7 +12,7 @@
  * own client satisfies all four by construction; local attackers cannot
  * read the secret out of the plugin process's memory.
  *
- * @module dsh-workbuddy-connect/shim
+ * @module dsh-workbuddy-bridge/shim
  */
 
 import { randomBytes, timingSafeEqual } from 'node:crypto'
@@ -239,7 +239,7 @@ export function createWorkBuddyShim(options: WorkBuddyShimOptions): WorkBuddyShi
       if (chunk.includes('[DONE]')) sawDone = true
     })
     body.on('error', (error: unknown) => {
-      logger?.warn('dsh-workbuddy-connect: upstream stream failed mid-flight', error)
+      logger?.warn('dsh-workbuddy-bridge: upstream stream failed mid-flight', error)
       if (!sawDone && res.writable) res.end('data: [DONE]\n\n')
     })
     body.pipe(res)

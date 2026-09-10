@@ -2,7 +2,7 @@
  * WorkBuddy models for DeepSeek Harness, reusing the WorkBuddy desktop
  * app's sign-in. Registers the `workbuddy` provider; streaming, tool calls,
  * compaction, and permissions stay Harness-owned.
- * @module dsh-workbuddy-connect
+ * @module dsh-workbuddy-bridge
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -187,7 +187,7 @@ export function apply(ctx: Context, config: Config): void {
         // heartbeat after a crash is detected by PID in the reader.
         void writeHostHeartbeat()
       } catch (error: unknown) {
-        ctx.logger.error('dsh-workbuddy-connect: provider registration failed', error)
+        ctx.logger.error('dsh-workbuddy-bridge: provider registration failed', error)
         return
       }
 
@@ -201,13 +201,13 @@ export function apply(ctx: Context, config: Config): void {
           invalidate?.()
         } catch (error: unknown) {
           ctx.logger.warn(
-            'dsh-workbuddy-connect: dynamic model catalog unavailable; serving the static fallback list',
+            'dsh-workbuddy-bridge: dynamic model catalog unavailable; serving the static fallback list',
             error,
           )
         }
       })()
     })
     .catch((error: unknown) => {
-      ctx.logger.error('dsh-workbuddy-connect: loopback endpoint failed to start; provider not registered', error)
+      ctx.logger.error('dsh-workbuddy-bridge: loopback endpoint failed to start; provider not registered', error)
     })
 }

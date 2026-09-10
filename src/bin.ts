@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Standalone status/diagnostics CLI for the dsh-workbuddy-connect bundle. */
+/** Standalone status/diagnostics CLI for the dsh-workbuddy-bridge bundle. */
 
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -23,7 +23,7 @@ function safeMessage(error: unknown): string {
 
 function printHelp(): void {
   process.stdout.write([
-    'Usage: dsh-workbuddy-connect <doctor|status|logout> [--json]',
+    'Usage: dsh-workbuddy-bridge <doctor|status|logout> [--json]',
     '',
     '  doctor   secret-free sign-in and environment diagnostics',
     '  status   sign-in state, remaining WorkBuddy credit, and host-bundle health',
@@ -50,7 +50,7 @@ async function doctor(jsonOutput: boolean): Promise<number> {
   const hostAlive = heartbeat !== undefined && isHeartbeatProcessAlive(heartbeat)
   const report = {
     schemaVersion: JSON_SCHEMA_VERSION,
-    package: 'dsh-workbuddy-connect',
+    package: 'dsh-workbuddy-bridge',
     version: WORKBUDDY_CONNECT_VERSION,
     node: process.version,
     desktopAuthFile: {
@@ -97,7 +97,7 @@ async function status(jsonOutput: boolean): Promise<number> {
   const hostState = hostAlive ? 'running' : heartbeat !== undefined ? 'stale' : 'not-started'
   if (authStatus.state !== 'signed-in') {
     if (jsonOutput) {
-      printJson({ schemaVersion: JSON_SCHEMA_VERSION, package: 'dsh-workbuddy-connect', version: WORKBUDDY_CONNECT_VERSION, status: 'signed-out', hostBundle: hostState })
+      printJson({ schemaVersion: JSON_SCHEMA_VERSION, package: 'dsh-workbuddy-bridge', version: WORKBUDDY_CONNECT_VERSION, status: 'signed-out', hostBundle: hostState })
     } else {
       process.stdout.write(`WorkBuddy Connect: signed out\nHost bundle: ${hostState}\n`)
     }
@@ -114,7 +114,7 @@ async function status(jsonOutput: boolean): Promise<number> {
   if (jsonOutput) {
     printJson({
       schemaVersion: JSON_SCHEMA_VERSION,
-      package: 'dsh-workbuddy-connect',
+      package: 'dsh-workbuddy-bridge',
       version: WORKBUDDY_CONNECT_VERSION,
       status: 'signed-in',
       ...expiresAt === undefined ? {} : { accessTokenExpires: expiresAt },
@@ -149,14 +149,14 @@ export async function run(argv: readonly string[]): Promise<number> {
   const [rawAction, ...flags] = argv
   const actions: readonly Action[] = ['doctor', 'logout', 'status']
   if (!actions.includes(rawAction as Action)) {
-    process.stderr.write(`dsh-workbuddy-connect: expected doctor, logout, or status; got ${JSON.stringify(rawAction)}\n`)
+    process.stderr.write(`dsh-workbuddy-bridge: expected doctor, logout, or status; got ${JSON.stringify(rawAction)}\n`)
     return 1
   }
   const action = rawAction as Action
   const jsonOutput = flags.includes('--json')
   const unknown = flags.filter(flag => flag !== '--json')
   if (unknown.length > 0 || (jsonOutput && action === 'logout')) {
-    process.stderr.write(`dsh-workbuddy-connect: invalid options for ${action}: ${flags.join(' ')}\n`)
+    process.stderr.write(`dsh-workbuddy-bridge: invalid options for ${action}: ${flags.join(' ')}\n`)
     return 1
   }
   try {
@@ -173,7 +173,7 @@ export async function run(argv: readonly string[]): Promise<number> {
       }
     }
   } catch (error: unknown) {
-    process.stderr.write(`dsh-workbuddy-connect: ${action} failed: ${safeMessage(error)}\n`)
+    process.stderr.write(`dsh-workbuddy-bridge: ${action} failed: ${safeMessage(error)}\n`)
     return 1
   }
 }
