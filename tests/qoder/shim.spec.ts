@@ -143,4 +143,50 @@ describe('Qoder shim', () => {
     expect(response.status).toBe(401)
     expect(await response.text()).toContain('unauthorized')
   })
+
+  it('rejects a chat for a model the account cannot drive', async () => {
+    // After the live catalog refresh, only the account's enabled model remains.
+    const catalog = new QoderCatalog()
+    catalog.set([...FALLBACK_QODER_MODELS.filter(model => model.id === 'qmodel_38max')])
+    let reachedUpstream = false
+    const shim = createQoderShim({
+      store: await fixtureStore(),
+      catalog,
+      client: {
+        async chatStream() { reachedUpstream = true; return { ok: false, status: 500, kind: 'server', message: 'x' } },
+      },
+    })
+    await shim.ready
+    CLEANUP.push(() => shim.close())
+
+    const response = await post(shim, { model: 'qfmodel', messages: [{ role: 'user', content: 'hi' }] })
+    expect(response.status).toBe(400)
+    expect(reachedUpstream).toBe(false)
+    const body = await response.json() as { error: { message: string } }
+    expect(body.error.message).toContain('not available')
+    expect(body.error.message).toContain('qmodel_38max')
+  })
+
+  it('resolves auto to the account default enabled model', async () => {
+    const catalog = new QoderCatalog()
+    catalog.set([...FALLBACK_QODER_MODELS.filter(model => model.id === 'qmodel_38max')])
+    const bodies: string[] = []
+    const shim = createQoderShim({
+      store: await fixtureStore(),
+      catalog,
+      client: {
+        async chatStream(_credential, bodyJson) {
+          bodies.push(bodyJson)
+          return { ok: true, response: new Response('data: [DONE]\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream' } }) }
+        },
+      },
+    })
+    await shim.ready
+    CLEANUP.push(() => shim.close())
+
+    const response = await post(shim, { model: 'auto', messages: [{ role: 'user', content: 'hi' }] })
+    expect(response.status).toBe(200)
+    const forwarded = JSON.parse(bodies[0]!) as Record<string, unknown>
+    expect(forwarded['model']).toBe('qmodel_38max')
+  })
 })

@@ -100,7 +100,7 @@ describe('createQoderAdapter', () => {
 
   it('leaves a name with no offer facts alone', async () => {
     const { adapter } = createQoderAdapter(makeOptions([
-      { id: 'bare', name: 'Bare', contextWindow: 1000, maxTokens: 100, supportsImages: false, source: 'system' },
+      { id: 'bare', name: 'Bare', contextWindow: 1000, maxTokens: 100, supportsImages: false, source: 'system', enabled: true, isDefault: false },
     ]))
     const models = await adapter.listModels(QODER_PROVIDER)
     expect(models.map(model => model.name)).toEqual(['Bare'])
@@ -111,7 +111,7 @@ describe('createQoderAdapter', () => {
     const { adapter } = createQoderAdapter(options)
     expect((await adapter.listModels(QODER_PROVIDER)).length).toBe(14)
     options.catalog.set([
-      { id: 'live-only', name: 'Live Only', contextWindow: 1000, maxTokens: 100, supportsImages: false, source: 'system' },
+      { id: 'live-only', name: 'Live Only', contextWindow: 1000, maxTokens: 100, supportsImages: false, source: 'system', enabled: true, isDefault: true },
     ])
     const models = await adapter.listModels(QODER_PROVIDER)
     expect(models.map(model => model.id)).toEqual(['live-only'])

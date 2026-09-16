@@ -468,15 +468,16 @@ describe('QoderUpstreamClient', () => {
         { key: 'other-format', source: 'system', format: 'anthropic' },
         // `format` is optional; a missing one is not a reason to drop a row.
         { key: 'no-format', source: 'system' },
-        // `enable:false` is a UI default, not a capability limit — `dmodel`
-        // carries it and has been driven end to end.
+        // `enable:false` is an account-entitlement flag, not a UI hint: a model
+        // the account cannot drive is dropped so the host never offers it, and
+        // a request for it would silently downgrade to the gateway default.
         { key: 'disabled-flag', source: 'system', format: 'openai', enable: false },
       ],
     }), { status: 200 }))
 
     const client = new QoderUpstreamClient({ api: loadQoderWasm() })
     const models = await client.fetchModels(credential)
-    expect(models.map(model => model.id)).toEqual(['keep', 'no-format', 'disabled-flag'])
+    expect(models.map(model => model.id)).toEqual(['keep', 'no-format'])
   })
 
   it('refuses a catalog that resolves to nothing', async () => {

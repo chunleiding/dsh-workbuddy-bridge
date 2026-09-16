@@ -57,7 +57,7 @@ describe('QoderCatalog', () => {
 
   it('accepts a wholesale replacement from the upstream answer', () => {
     const catalog = new QoderCatalog()
-    catalog.set([{ id: 'live-only', name: 'Live', contextWindow: 1, maxTokens: 1, supportsImages: false, source: 'system' }])
+    catalog.set([{ id: 'live-only', name: 'Live', contextWindow: 1, maxTokens: 1, supportsImages: false, source: 'system', enabled: true, isDefault: true }])
     expect(catalog.current().map(model => model.id)).toEqual(['live-only'])
     // The fallback constant itself is never mutated.
     expect(FALLBACK_QODER_MODELS.length).toBe(14)

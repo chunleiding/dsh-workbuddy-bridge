@@ -111,6 +111,19 @@ export interface QoderModelInfo {
   billing?: QoderModelBilling
   /** Catalog `source`; `system` is what this driver can serve. */
   source: string
+  /**
+   * Whether the live catalog marks the model enabled for this account.
+   *
+   * `enable` is an account-level entitlement flag, not a UI hint: a model with
+   * `enable: false` is not usable on the calling account, and asking the
+   * gateway for it silently falls back to its hard default model (observed as
+   * "Qwen3.5") rather than erroring. The driver therefore drops `enable: false`
+   * rows from the catalog it exposes, so the host never offers a model the
+   * account cannot actually drive.
+   */
+  enabled: boolean
+  /** Whether the live catalog marks this the account's default model. */
+  isDefault: boolean
 }
 
 /** Nodes the region endpoint reports. */
@@ -280,6 +293,12 @@ export function mapQoderModel(row: unknown): QoderModelInfo | undefined {
     ...reasoning === undefined ? {} : { reasoning },
     ...billing === undefined ? {} : { billing },
     source: source === '' ? 'system' : source,
+    // `enable` is an account-entitlement flag. The live catalog always carries
+    // it, but a row that omits it (older/partial payloads, fixtures) is treated
+    // as enabled rather than silently dropped — only an explicit `false` is a
+    // capability limit.
+    enabled: wrapped['enable'] !== false,
+    isDefault: wrapped['is_default'] === true,
   }
 }
 
@@ -708,10 +727,13 @@ export class QoderUpstreamClient {
    * GET the model catalog and keep the rows this driver can serve.
    *
    * Only `source: system` rows are kept — a BYOK row would need the user's own
-   * key — and only `format: openai` rows are meaningful through a
-   * chat-completions shim. `enable` is deliberately **not** filtered on: the
-   * catalog uses it as a UI default, and a model with `enable: false` (for
-   * example `dmodel`) has been driven successfully end to end.
+   * key — only `format: openai` rows are meaningful through a chat-completions
+   * shim, and only `enable: true` rows are exposed. `enable` is an
+   * account-level entitlement flag, not a UI default: a model with
+   * `enable: false` is not drivable on this account, and requesting it makes
+   * the gateway silently fall back to its hard default model (observed answering
+   * as "Qwen3.5") instead of erroring. Dropping those rows keeps the host's
+   * model picker honest, so a user can only select a model the account can use.
    */
   async fetchModels(credential: QoderCredential): Promise<readonly QoderModelInfo[]> {
     const context = this.buildContext(credential)
@@ -755,6 +777,7 @@ export class QoderUpstreamClient {
       if (mapped.source !== 'system') continue
       const format = typeof row === 'object' && row !== null ? (row as Record<string, unknown>)['format'] : undefined
       if (format !== undefined && format !== 'openai') continue
+      if (!mapped.enabled) continue
       models.push(mapped)
     }
     if (models.length === 0) throw new Error('qoder: model catalog resolved to an empty list')
