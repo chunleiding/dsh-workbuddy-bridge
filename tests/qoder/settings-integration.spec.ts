@@ -78,7 +78,7 @@ describe('qoder host integration', () => {
     expect(dmodel.reasoning?.efforts.map(effort => effort.id)).toEqual(['high', 'max'])
     const qmax = await ctx.llm.resolveModelInfo('qoder', 'qmodel_38max')
     expect(qmax.reasoning?.efforts.map(effort => effort.id)).toEqual(['low', 'medium', 'xhigh'])
-    expect(qmax.context?.contextWindow).toBe(200_000)
+    expect(qmax.context?.contextWindow).toBe(1_000_000)
 
     // Image capability follows the per-model flag.
     const modalities = new Map(models.map(model => [model.id, model.inputModalities]))

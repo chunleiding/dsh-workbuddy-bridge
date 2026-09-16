@@ -197,16 +197,22 @@ export function classifyQoderError(status: number, body: string): BridgeErrorKin
 
 /** Parse a catalog `context_config` into the default tier's token count. */
 function contextWindowOf(row: Record<string, unknown>): number {
+  // `context_config` carries the model's capacity tiers (e.g. `200K`,
+  // `400K`, `1M`); the backend auto-selects the smallest tier that fits the
+  // request, so the *largest* tier is the model's true ceiling. Reporting the
+  // maximum lets the host size requests to the model's full reach instead of
+  // understating it at the catalog's `is_default` tier.
   const config = row['context_config']
   if (typeof config === 'object' && config !== null && !Array.isArray(config)) {
     const tiers = config as Record<string, unknown>
+    let max = 0
     for (const tier of Object.values(tiers)) {
       if (typeof tier !== 'object' || tier === null) continue
       const wrapped = tier as Record<string, unknown>
-      if (wrapped['is_default'] !== true) continue
       const count = wrapped['token_count']
-      if (typeof count === 'number' && count > 0) return count
+      if (typeof count === 'number' && count > max) max = count
     }
+    if (max > 0) return max
   }
   const declared = row['max_input_tokens']
   if (typeof declared === 'number' && declared > 0) return declared

@@ -49,7 +49,7 @@ describe('createQoderAdapter', () => {
   it('carries the context window from the catalog', async () => {
     const { adapter } = createQoderAdapter(makeOptions())
     const resolved = await adapter.resolveModel(QODER_PROVIDER, 'qmodel_38max')
-    expect(resolved.context?.contextWindow).toBe(200_000)
+    expect(resolved.context?.contextWindow).toBe(1_000_000)
   })
 
   it('offers exactly the thinking ladder Qoder offers for that model', async () => {

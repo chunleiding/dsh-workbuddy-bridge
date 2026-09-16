@@ -133,9 +133,12 @@ describe('mapQoderModel', () => {
       context_config: {
         small: { token_count: 100_000, is_default: false },
         large: { token_count: 200_000, is_default: true },
+        max: { token_count: 1_000_000 },
       },
     })
-    expect(mapped?.contextWindow).toBe(200_000)
+    // The largest tier is the model's true ceiling; the backend auto-selects
+    // the smallest tier that fits, so report the maximum, not `is_default`.
+    expect(mapped?.contextWindow).toBe(1_000_000)
     expect(mapped?.supportsImages).toBe(true)
     expect(mapped?.maxTokens).toBe(32_000)
   })
