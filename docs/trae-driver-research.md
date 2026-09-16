@@ -199,8 +199,9 @@ event: error        data: {code, message, extra}
 
 ## 7. 建议与下一步
 
-1. **Trae 不作为 Driver 落地**（理由见 §5.3）。继续投入会变成「在客户端复现 Trae 的 agent 会话协议」，与框架
-   「复用登录态 + 额度、把平台原生补全协议接进 loopback」的定位不是一回事，工作量也远超 Loomy/WorkBuddy。
+1. **Trae 不作为 Driver 落地**（理由见 §5.3 与 §1.1 的「不可行」三分解）。继续投入会变成「在客户端复现 Trae 的
+   agent 会话协议」：与框架「复用登录态 + 额度、把平台原生补全协议接进 loopback」的定位不是一回事，工作量也远超
+   Loomy/WorkBuddy（后者两次接入都在一天内完成，且 Qoder 那次零 core 改动）。
 2. **反向仍有价值**：Trae 原生支持自定义模型（`/api/ide/v1/get_custom_model_type_config`、
    `/api/agent/v3/custom_model_connectivity_check`，二进制含 `custom-model-proxy-client` crate）。
    若只是想在 Trae 里用别的模型，走 GUI 自定义模型即可，**零逆向**。
