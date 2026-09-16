@@ -2,8 +2,11 @@
 
 > 用途：把 Qoder（QoderWork CN）做成 `dsh-llm-bridge` 的 Driver（复用其登录态 + 额度）。
 > 框架定位见根 README 与 `docs/loomy-driver.md`。同批调研：`docs/trae-driver-research.md`。
-> 状态：**端到端打通**（凭据 → 签名 → 推理 → 流式解密），PoC 见 `scripts/qoder-poc.mjs`。
-> 结论：**可实现**，但必须嵌入官方 wasm；工作量约 **3–4x Loomy**（原估 5–10x，因凭据 key 已破解而下调）。
+> 状态：**驱动已落地并跑通真实链路**（`src/drivers/qoder/`）。逆向阶段的 PoC 保留为
+> `scripts/qoder-poc.mjs`（协议探针，可单独跑）；作为回归基线的是
+> `scripts/live-e2e-qoder.mjs`（走完整 driver → pi-ai → shim → 真实网关）。
+> 结论：**可实现且已实现**；代价是必须内嵌官方 wasm（~289KB），工作量约 **3–4x Loomy**
+> （原估 5–10x，因凭据 key 已破解而下调）。
 
 ---
 
@@ -18,7 +21,9 @@
 | 请求/响应格式 | ✅ **OpenAI 兼容**（`choices[].delta.content` / `[DONE]`），但 **body 被 must-be-wasm 加密** |
 | 模型选择 | ✅ 走 `X-Model-Key` 头（14 个模型，全部 `format=openai`） |
 | 与 core 契约的契合 | ✅ 单向转发即可（不像 Trae 是有状态 agent 协议） |
-| 剩余风险 | ⚠️ 必须随包分发/内嵌官方 wasm（~289KB，wasm-bindgen）；升级时需重取 |
+| 对 `src/core/` 的改动 | ✅ **零改动**（信封拆解在 driver 内完成，见 §7.1） |
+| 剩余风险 | ⚠️ 内嵌官方 wasm（~289KB）；App 升级后需 `node scripts/vendor-qoder-wasm.mjs` 重取 |
+| 落地状态 | ✅ `src/drivers/qoder/` 已实现；离线 106 用例 + `scripts/live-e2e-qoder.mjs` live 回归均通过 |
 
 > **路线 A 胜出（原 §9.5 的 A/B 二选一）**：既然 key 可派生，就不需要 **路线 B** 的 device-flow 浏览器授权。
 > 直接读现有登录态即可，走的是用户已登录的账号与额度。
@@ -269,7 +274,50 @@ src/drivers/qoder/
   直接切出（7877 字节，PoC 即此法，见 `scripts/qoder-poc.mjs` 的 `extractGlue()`）。
 - 需从混淆 SDK 移植的只有 4 个类/函数包装（`QoderContext`、`RequestResult`、
   `credential_storage_decrypt/encrypt`、`generate_runtime_auth_fields`），PoC 已全部写好。
-- 分发形态待定：随包内嵌 wasm（287KB）vs. 运行时从本机 App 读取（要求已装 Qoder）。
+- **分发形态已定：随包内嵌 wasm**（见 §7.1）。运行时从本机 App 读取意味着「没装 Qoder 就
+  连目录都注册不了」，而且 App 升级会把文件换掉——内嵌只让升级表现为「重新 vendor 一次」。
+
+### 7.1 落地结果（as shipped）
+
+实际落盘的模块（比草案多出的是对外可见面与升级工具）：
+
+```
+src/drivers/qoder/
+  meta.ts         两台主机、COSY 版本、auth 目录布局、client metadata
+  credential.ts   纯派生：key、userInfo→credential、refresh 归一化、merge
+  auth.ts         QoderCredentialStore：发现 → 解密 → 按需刷新 → 加密写回
+  wasm.ts         内嵌 wasm 的装配与调用（含 openServerPayload 的 try-fallback）
+  vendor/artifacts.ts   GENERATED，base64 内嵌 wasm + glue，勿手改
+  upstream.ts     节点发现、签名推理、SSE 信封拆解、刷新、模型目录
+  catalog.ts      14 个模型的静态 fallback（上游刷新后整体替换）
+  adapter.ts      catalog → pi-ai 描述符（图片、思考档位、费率/徽章后缀）
+  shim.ts / heartbeat.ts / status-paths.ts / web-status.ts / cli.ts / plugin.ts
+  client/         QoderPluginCard + locales（设置页卡片）
+scripts/vendor-qoder-wasm.mjs    App 升级后重新 vendor（带 11 个必需导出断言）
+scripts/live-e2e-qoder.mjs       完整链路的 live 回归（见 §10）
+tests/qoder/                     7 个 spec，106 个离线用例
+```
+
+**本案与草案不同的四处判断**（都是实测逼出来的，不是偏好）：
+
+1. **信封拆解放在 driver，不放 core**。core 的 shim 把 driver 返回的 body **原样**转发，
+   所以 `translateQoderStream()` 必须在 driver 里把信封的 `body` 字符串拆出来、重新拼成
+   普通 `data: <chunk>` 帧。core 一行没改——这正好验证了当初「core 不含平台语义」的拆分。
+2. **不做「关闭思考」开关**。实测推理端点**接受任意 `reasoning_effort` 字符串**（含无意义取值，
+   全部 200），所以没有任何拼写能被证明等于「关」。只把 catalog 明确声明的档位映射进
+   pi-ai 的 `thinkingLevelMap`，`off` 恒为 `null`（即默认不发该字段）。宁可没有开关，
+   也不要一个看起来生效、实际服务端继续思考的开关。
+3. **请求体近乎原样透传**。实测反序列化很宽松（未知字段、`tool_choice`、`tools`、
+   `max_completion_tokens`、`developer` 角色都 200），所以不收缩成白名单——白名单会静默
+   丢掉平台其实支持的能力。只做三件事：强制 `stream:true`、盖新的 `request_id`/`task_id`
+   （保留 `session_id`）、把 `developer` 改写成 `system`（`system` 才是确定生效的拼写）。
+4. **轮换写回带乐观并发**。写盘前先「重加密→解密→比对」，再做时间戳备份，再
+   `write temp + rename`；若发现磁盘上的内容不是本次刷新开始时的那一份（App 自己先刷了），
+   就放弃写入、改读 App 的新凭据。写错一个字节就毁掉用户登录态，这几步一个都不能省。
+
+`enable: false` 的模型（如 `dmodel`）**不从目录里过滤**：那是 UI 默认值，不是能力上限，
+实测可以正常驱动。
+
 
 ---
 
@@ -300,17 +348,51 @@ src/drivers/qoder/
 9. **`.auth-cn/user` 是 base64 文本，不是裸密文**；wasm 内部自行 base64 解码，输入必须是文本。
 10. Keychain 里的 `QoderWork CN Safe Storage`（Electron `safeStorage`）**与凭据解密无关**，别走错路。
 
+上表每条都已落进离线用例，改代码时对着跑：
+
+| 坑 | 守护它的用例 |
+|---|---|
+| 1 / 9 key 派生与 base64 文本 | `tests/qoder/credential.spec.ts`、`tests/qoder/wasm.spec.ts`（确定性封印 + 往返） |
+| 2 `id` / `machine_id` 两种文件名 | `tests/qoder/auth.spec.ts`（两种文件名都解析；半个候选目录必须跳过） |
+| 3 现场派生 auth fields | `tests/qoder/upstream.spec.ts`（签名后 body 与入参不同、`X-Model-Key` 正确） |
+| 4 / 10 `organization_tags` 非空数组 | `tests/qoder/wasm.spec.ts`（`null` 必须抛错） |
+| 5 不覆盖 wasm 的 `Authorization` | `tests/qoder/upstream.spec.ts` |
+| 6 refresh 轮换写回 | `tests/qoder/auth.spec.ts`（写回、备份、并发被抢占、round-trip 失败拒绝写） |
+| 7 响应解密 fallback | `tests/qoder/upstream.spec.ts`（明文帧 / 加密封帧两条路径） |
+| 8 每请求新建 context | `tests/qoder/upstream.spec.ts` |
+
 ---
 
 ## 10. 可复现命令
 
 ```bash
+# 协议探针（逆向阶段产物，绕过 driver 直接打协议）
 node scripts/qoder-poc.mjs auth               # 解密凭据 + 派生校验 + 逐字节往返校验
 node scripts/qoder-poc.mjs models             # 14 个模型（3 个 scene）
 node scripts/qoder-poc.mjs chat auto "…"      # 真实对话（流式）
 node scripts/qoder-poc.mjs refresh            # 只看轮换情况，不写盘
 node scripts/qoder-poc.mjs refresh --write    # 刷新并加密写回（自动备份 .bak-<ts>）
+
+# 完整链路 live 回归（driver → pi-ai → shim → 真实网关）
+npm run build && node scripts/live-e2e-qoder.mjs          # 默认 auto
+node scripts/live-e2e-qoder.mjs dmodel                    # 指定模型
+
+# App 升级后重新 vendor 内嵌资产
+node scripts/vendor-qoder-wasm.mjs
 ```
+
+**最后一次 live 回归的结果**（2026-09-16，`QoderWork CN` 已登录 `Pro`）：
+
+| 观察点 | 结果 |
+|---|---|
+| shim | `http://127.0.0.1:51708` |
+| 静态目录 | 14 个模型（与上游一致） |
+| 节点发现 | `https://gateway.qoder.com.cn` |
+| 上游目录 | 14 个模型，与静态 fallback 完全一致 |
+| `auto` | `Auto · x0.5`，无思考档位，context 180000 → `"链路验证成功"`，911ms |
+| `dmodel` | `DeepSeek-V4-Pro · x0.8`，档位 `high/max`，context 200000 → `"链路验证成功"`，550ms |
+| 分块类型 | `block-start` / `text-delta`×2 / `block-end` / `usage` / `finish` |
+| 凭据轮换 | 本次未触发（token 有效期至 2026-10-16）；但此前探针已实跑过一次写回，`.auth-cn/` 里留着 `user.bak-2026-09-16T11-27-23-453Z` |
 
 > 逆向来源：`/Applications/QoderWork CN.app/Contents/{Resources/app.asar,Resources/qoder-auth-wasm/}`，
 > 解包至 `/tmp/qoder-asar-extract`；`@qoder-ai/qoder-agent-sdk` v1.0.25 的 `_worker/qoder-worker-runtime.obf.mjs`（31MB，混淆）。

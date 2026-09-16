@@ -14,13 +14,14 @@ import { describe, expect, it, vi } from 'vitest'
  *
  * DRIFT WARNING: the functions below are manual mirrors of the real ones
  * in `src/client/index.tsx`,
- * `src/drivers/workbuddy/client/index.tsx`, and
- * `src/drivers/loomy/client/index.tsx`. They are NOT product code, so this
+ * `src/drivers/workbuddy/client/index.tsx`,
+ * `src/drivers/loomy/client/index.tsx`, and
+ * `src/drivers/qoder/client/index.tsx`. They are NOT product code, so this
  * test only proves the fallback idea — it cannot detect a regression in the
  * real entries. Keep the guarded bodies and console.error messages in sync.
  */
 describe('client card fallback', () => {
-  it('swallows slot registration failures from both drivers instead of throwing', () => {
+  it('swallows slot registration failures from every driver instead of throwing', () => {
     const errors: unknown[] = []
     const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args) })
 
@@ -33,7 +34,7 @@ describe('client card fallback', () => {
       },
     }
 
-    // Mirrors of drivers/workbuddy/client/index.tsx and drivers/loomy/client/index.tsx.
+    // Mirrors of each driver's client/index.tsx.
     function registerWorkBuddyCard(ctx: any): void {
       try {
         const namespace = 'settings.workbuddy'
@@ -57,25 +58,39 @@ describe('client card fallback', () => {
       }
     }
 
+    function registerQoderCard(ctx: any): void {
+      try {
+        const namespace = 'settings.qoder'
+        ctx.effect(() => ctx.locale.register(namespace, { zh: {}, en: {} }), 'dsh-llm-bridge: qoder settings copy')
+        const t = ctx.locale.bind(namespace)
+        ctx.slots.inject('settings.plugin.item', () => { throw new Error('not reached') })
+        void t
+      } catch (error: unknown) {
+        console.error('[dsh-llm-bridge] qoder client card failed to load (host provider unaffected):', error)
+      }
+    }
+
     // Mirror of src/client/index.tsx apply().
     function apply(ctx: any): void {
       registerWorkBuddyCard(ctx)
       registerLoomyCard(ctx)
+      registerQoderCard(ctx)
     }
 
     // Must not throw — the whole point of the fallback.
     expect(() => apply(fakeCtx)).not.toThrow()
 
-    // Both failures are visible in the console, and neither aborts the other.
-    expect(errors).toHaveLength(2)
+    // Every failure is visible in the console, and none aborts the others.
+    expect(errors).toHaveLength(3)
     expect(String(errors[0])).toContain('workbuddy client card failed to load')
     expect(String(errors[1])).toContain('loomy client card failed to load')
+    expect(String(errors[2])).toContain('qoder client card failed to load')
     for (const error of errors) expect(String(error)).toContain('requires options.key')
 
     spy.mockRestore()
   })
 
-  it('keeps registering the second card when only one driver throws', () => {
+  it('keeps registering the later cards when an earlier driver throws', () => {
     const errors: unknown[] = []
     const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args) })
     let loomyRegistered = false

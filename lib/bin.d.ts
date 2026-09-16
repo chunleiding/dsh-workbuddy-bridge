@@ -3,7 +3,7 @@
  * Standalone status/diagnostics CLI for dsh-llm-bridge.
  *
  * Usage:
- *   dsh-llm-bridge [workbuddy|loomy] <doctor|status|logout> [--json]
+ *   dsh-llm-bridge [workbuddy|loomy|qoder] <doctor|status|logout> [--json]
  *
  * With no driver argument, doctor/status report across every shipped driver;
  * logout is destructive-adjacent and always requires an explicit driver.

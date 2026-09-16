@@ -4,10 +4,11 @@
 [English](./README.en.md) | 中文
 
 
-复用闭源 AI 桌面 App 已有的登录态与额度，把它们包含的模型零配置接入 DeepSeek Harness。当前内置两个驱动，安装一次即可同时使用：
+复用闭源 AI 桌面 App 已有的登录态与额度，把它们包含的模型零配置接入 DeepSeek Harness。当前内置三个驱动，安装一次即可同时使用：
 
 - **WorkBuddy 驱动**：WorkBuddy / CodeBuddy 桌面 App 的 GLM-5.3、GLM-5.2、DeepSeek-V4-Pro、DeepSeek-V4-Flash、Kimi-K3、MiniMax-M3、Hy3 等。
 - **Loomy 驱动**：Loomy（讯飞）桌面 App imodel 后端的 DeepSeek V4 Flash、MiniMax M3、Kimi k2.6、Qwen 3.8 Max、GLM 5.3 Flash、Spark X2.5、MiMo V2.5、Qwen3.5 Flash 等。
+- **Qoder 驱动**：Qoder（QoderWork CN）桌面 App 的 Qwen3.8-Max / Flash、Qwen3.7-Max / Plus / Flash、DeepSeek-V4-Pro / Flash、GLM-5.3 / Flash、GLM-5.2、Kimi-K3 / K2.8-Preview、MiniMax-M2.7、Auto 等 14 个模型。
 
 在模型选择器里选哪个平台的模型，就是在切换使用哪个平台的额度，无需额外开关。
 
@@ -17,11 +18,14 @@
 
 ```
 src/core/                 平台无关机制
-src/drivers/workbuddy/    WorkBuddy 驱动（当前唯一驱动）
-src/drivers/trae/ …       后续驱动的预留位置（尚未实现）
+src/drivers/workbuddy/    WorkBuddy 驱动
+src/drivers/loomy/        Loomy 驱动
+src/drivers/qoder/        Qoder 驱动（内嵌官方 wasm）
 ```
 
-未来接入 Trae / Qoder 只需新增驱动；本次拆分不改变 WorkBuddy 的任何现有行为。
+接入新平台只需新增驱动，`src/core/` 无需为任何平台改动——Qoder 驱动就做到了零 core 改动
+（它把上游的信封式 SSE 在 driver 内拆成普通帧；core 只负责原样转发）。平台私有事实的
+逆向记录见 `docs/`。
 
 
 ## 功能
@@ -57,13 +61,14 @@ src/drivers/trae/ …       后续驱动的预留位置（尚未实现）
 
 - WorkBuddy 驱动：已安装并登录 **WorkBuddy 桌面 App**（复用 App 登录状态，账号切换自动跟随）。
 - Loomy 驱动：已安装并登录 **Loomy 桌面 App**（读取本机 `auth-session.json` 会话，重新登录后自动跟随）。
-- 两个驱动相互独立，装了哪个 App 就能用哪个平台；未安装的平台只会在卡片里显示未登录，不影响另一个。
+- Qoder 驱动：已安装并登录 **Qoder（QoderWork CN）桌面 App**（读取本机 `~/.qoderworkcn/.auth-cn/` 登录态；Qoder 的 refresh token 每次使用都会轮换，插件在轮换后会加密写回 App 自己的凭据文件并留下 `.bak-<时间戳>` 备份，所以插件用额度和 App 用额度不会互相把对方挤下线）。
+- 三个驱动相互独立，装了哪个 App 就能用哪个平台；未安装的平台只会在卡片里显示未登录，不影响其他驱动。
 
 **版本对应（重要）**：本插件与 DSH 核心版本一一对应，不可混用——不匹配的组合会导致 DSH 启动失败：
 
 | 插件版本 | 要求的 DSH 核心 | 桌面 App |
 |---|---|---|
-| **0.4.0+** | `0.1.2-rc.1` 及以上 | WorkBuddy `2.0.5`+；Loomy `0.9.37` 左右 |
+| **0.4.0+** | `0.1.2-rc.1` 及以上 | WorkBuddy `2.0.5`+；Loomy `0.9.37` 左右；Qoder（QoderWork CN）`0.9.17`（内嵌 wasm 取自该版本） |
 | **0.3.x** | `0.1.2-rc.1` 及以上 | WorkBuddy 建议 `2.0.5`+（仅 WorkBuddy 驱动，旧包名 `dsh-workbuddy-bridge`） |
 | **0.2.6** | `0.1.1-rc.2`（旧线） | `2.0.3` / `2.0.4` |
 
@@ -98,7 +103,7 @@ dsh --profile dsh-tui
 
 > 提示：`dsh-tui` profile 需用 pnpm 11 安装（PATH 里是其他版本会报 `ERR_PNPM_UNEXPECTED_STORE`，用 `npx pnpm@11` 即可）。
 
-安装后，在对应界面的模型选择器里切换到 WorkBuddy / Loomy 模型即可使用；Web 下设置 → 插件里有两张卡片（**DSH WorkBuddy Connect** 与 **DSH Loomy Connect**），分别查看账号信息；TUI 下可在 `/settings` 的 `workbuddy` / `loomy` 命名空间配置 `authFile` / `sessionFile`。
+安装后，在对应界面的模型选择器里切换到 WorkBuddy / Loomy / Qoder 模型即可使用；Web 下设置 → 插件里有三张卡片（**DSH WorkBuddy Connect**、**DSH Loomy Connect** 与 **DSH Qoder Connect**），分别查看账号信息；TUI 下可在 `/settings` 的 `workbuddy` / `loomy` / `qoder` 命名空间配置 `authFile` / `sessionFile` / `authDir`。
 
 ## 命令行
 
@@ -108,26 +113,29 @@ dsh plugin --profile <web|desktop|dsh-tui> exec dsh-llm-bridge status
 
 # 只看某一个驱动
 dsh plugin --profile <web|desktop|dsh-tui> exec dsh-llm-bridge loomy status
+dsh plugin --profile <web|desktop|dsh-tui> exec dsh-llm-bridge qoder status
 dsh plugin --profile <web|desktop|dsh-tui> exec dsh-llm-bridge workbuddy doctor --json
 
-# logout 必须显式指定驱动（WorkBuddy 会删除插件自有的凭据副本；Loomy 无插件侧凭据，为空操作）
+# logout 必须显式指定驱动（WorkBuddy 会删除插件自有的凭据副本；Loomy / Qoder 无插件侧凭据，为空操作）
 dsh plugin --profile <web|desktop|dsh-tui> exec dsh-llm-bridge workbuddy logout
 ```
 
-支持 `doctor`（诊断）、`status`（登录态/额度/host 健康）、`logout`（清理插件侧凭据），`--json` 输出脱敏后的机器可读文档。Loomy 会话文件位置可用环境变量 `LOOMY_SESSION_FILE` 覆盖。
+支持 `doctor`（诊断）、`status`（登录态/额度/host 健康）、`logout`（清理插件侧凭据），`--json` 输出脱敏后的机器可读文档。Loomy 会话文件位置可用环境变量 `LOOMY_SESSION_FILE` 覆盖，Qoder 认证目录可用 `QODER_AUTH_DIR` 或设置卡片里的 `authDir` 覆盖。
 
 ## 已知限制
 
-- 在 macOS 的 DSH Web / Desktop / TUI 下验证通过（`0.1.2-rc.1`+、Node 22+；TUI 需终端界面插件 `0.10.0-beta.5` 及以上，见安装章节说明）。Windows 会依次探测 Local 与 Roaming AppData；WSL 会优先从挂载的 Windows 用户目录读取登录凭据。若 Windows 与 Linux 用户名不同且 Windows 环境变量未传入 WSL，请通过 `WORKBUDDY_AUTH_FILE` / `LOOMY_SESSION_FILE` 指定实际位置。
-- 两个驱动都依赖各自桌面 App 的客户端接口（非官方开放 API），上游更新后插件可能需要随之调整。
+- 在 macOS 的 DSH Web / Desktop / TUI 下验证通过（`0.1.2-rc.1`+、Node 22+；TUI 需终端界面插件 `0.10.0-beta.5` 及以上，见安装章节说明）。Windows 会依次探测 Local 与 Roaming AppData；WSL 会优先从挂载的 Windows 用户目录读取登录凭据。若 Windows 与 Linux 用户名不同且 Windows 环境变量未传入 WSL，请通过 `WORKBUDDY_AUTH_FILE` / `LOOMY_SESSION_FILE` / `QODER_AUTH_DIR` 指定实际位置。
+- 三个驱动都依赖各自桌面 App 的客户端接口（非官方开放 API），上游更新后插件可能需要随之调整。
 - Loomy 的图像生成模型（如 doubao-seedream、qwen-image）不通过对话接口提供，插件只暴露对话模型。
+- Qoder 驱动的请求签名必须用官方 wasm（无法用纯 JS 复现），插件内嵌了从 Qoder（QoderWork CN）`0.9.17` 取出的 `qoder_auth_wasm_bg.wasm` 与其 wasm-bindgen 胶水。Qoder 升级后若签名协议有变，需要重新执行 `node scripts/vendor-qoder-wasm.mjs` 重新内嵌（该脚本会校验 11 个必需导出，取出不完整会直接失败）。
+- Qoder 的「思考强度」只提供 catalog 明确声明的档位（例如 `dmodel` 为 high / max）。插件**不提供「关闭思考」选项**：实测该端点接受任意 `reasoning_effort` 取值，没有任何拼写能被证明等于「关」，与其给一个看着生效、实际不生效的开关，不如不给——默认档位交给 Qoder 自己决定。
 
 ## 免责声明
 
-- 本项目**仅供个人学习和研究使用**，仅驱动使用者自己的 WorkBuddy / Loomy 账号在本机调用，请勿用于商业用途或超出个人合理使用的场景。
-- 使用者需遵守 WorkBuddy / Loomy 的服务条款；因使用本项目产生的任何后果（包括但不限于账号被限制、额度被清空、服务中断），由使用者自行承担。
+- 本项目**仅供个人学习和研究使用**，仅驱动使用者自己的 WorkBuddy / Loomy / Qoder 账号在本机调用，请勿用于商业用途或超出个人合理使用的场景。
+- 使用者需遵守 WorkBuddy / Loomy / Qoder 的服务条款；因使用本项目产生的任何后果（包括但不限于账号被限制、额度被清空、服务中断），由使用者自行承担。
 - 本项目作者不对任何因使用或滥用本项目产生的直接或间接损失负责。
-- 本项目与腾讯、WorkBuddy、讯飞、Loomy、DeepSeek 均无关联，未获其授权或认可；文中出现的名称仅用于描述兼容关系，其商标权利归各自所有。
+- 本项目与腾讯、WorkBuddy、讯飞、Loomy、Qoder、DeepSeek 均无关联，未获其授权或认可；文中出现的名称仅用于描述兼容关系，其商标权利归各自所有。Qoder 驱动内嵌的 wasm 模块取自用户本机安装的 Qoder 客户端，仅为在本机复用其登录态而调用。
 
 ## 致谢
 

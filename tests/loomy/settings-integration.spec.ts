@@ -34,9 +34,12 @@ afterEach(async () => {
 })
 
 describe('multi-driver host integration', () => {
-  it('registers both the workbuddy and loomy providers with their own sections', async () => {
+  it('registers the workbuddy, loomy and qoder providers with their own sections', async () => {
     root = await mkdtemp(join(tmpdir(), 'dsh-llm-bridge-multi-'))
     vi.stubEnv('DSH_HOME', root)
+    // Point the Qoder driver at an empty directory so this spec stays offline
+    // and never reads the developer's own Qoder sign-in.
+    vi.stubEnv('QODER_AUTH_DIR', join(root, 'no-qoder-auth'))
     const ctx = new Context()
     context = ctx
     await ctx.plugin(LlmRuntime)
@@ -44,7 +47,8 @@ describe('multi-driver host integration', () => {
     await ctx.plugin(Bridge, {})
 
     await vi.waitFor(() => {
-      expect(ctx.llm.listProviders().map(provider => provider.id).sort()).toEqual(['loomy', 'workbuddy'])
+      expect(ctx.llm.listProviders().map(provider => provider.id).sort())
+        .toEqual(['loomy', 'qoder', 'workbuddy'])
     })
 
     expect(ctx.llm.listConfigurableProviders()).toContainEqual({

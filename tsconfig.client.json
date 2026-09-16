@@ -19,6 +19,7 @@
     "src/client",
     "src/core/client",
     "src/drivers/workbuddy/client",
-    "src/drivers/loomy/client"
+    "src/drivers/loomy/client",
+    "src/drivers/qoder/client"
   ]
 }

@@ -3,7 +3,7 @@
  * Standalone status/diagnostics CLI for dsh-llm-bridge.
  *
  * Usage:
- *   dsh-llm-bridge [workbuddy|loomy] <doctor|status|logout> [--json]
+ *   dsh-llm-bridge [workbuddy|loomy|qoder] <doctor|status|logout> [--json]
  *
  * With no driver argument, doctor/status report across every shipped driver;
  * logout is destructive-adjacent and always requires an explicit driver.
@@ -15,11 +15,12 @@ import { BRIDGE_VERSION } from './core/version.ts'
 import { isHeartbeatProcessAlive } from './core/heartbeat.ts'
 import { workbuddyCli, type DriverCli } from './drivers/workbuddy/cli.ts'
 import { loomyCli } from './drivers/loomy/cli.ts'
+import { qoderCli } from './drivers/qoder/cli.ts'
 
 type Action = 'doctor' | 'logout' | 'status'
 
 const JSON_SCHEMA_VERSION = 1
-const DRIVERS: readonly DriverCli[] = [workbuddyCli, loomyCli]
+const DRIVERS: readonly DriverCli[] = [workbuddyCli, loomyCli, qoderCli]
 
 /** Remove token-like strings from an unexpected diagnostic message. */
 function safeMessage(error: unknown): string {
@@ -33,7 +34,7 @@ function safeMessage(error: unknown): string {
 
 function printHelp(): void {
   process.stdout.write([
-    'Usage: dsh-llm-bridge [workbuddy|loomy] <doctor|status|logout> [--json]',
+    'Usage: dsh-llm-bridge [workbuddy|loomy|qoder] <doctor|status|logout> [--json]',
     '',
     '  doctor   secret-free sign-in and environment diagnostics',
     '  status   sign-in state, remaining quota, and host-bundle health',

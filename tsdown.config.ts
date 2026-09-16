@@ -48,6 +48,15 @@ export default [
         '@deepseek-ai/dsh-settings',
       ],
     },
+    outputOptions: {
+      // The Qoder driver embeds the app's wasm as base64 (see
+      // `scripts/vendor-qoder-wasm.mjs`), so one shared chunk is ~400 kB.
+      // Without a name it takes the name of whichever module rolldown met
+      // first, which produced a 522 kB file called `heartbeat-*.js`.
+      codeSplitting: {
+        groups: [{ name: 'qoder-wasm-assets', test: /drivers[/\\]qoder[/\\]vendor[/\\]/u }],
+      },
+    },
   },
   {
     entry: { client: 'src/client/index.tsx' },

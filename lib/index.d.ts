@@ -17,18 +17,18 @@ import { AttachmentStore } from "@deepseek-ai/dsh-attachment";
  */
 declare const WORKBUDDY_SETTINGS_NS: SettingsNamespace;
 /** WorkBuddy driver configuration. */
-interface Config$2 {
+interface Config$3 {
   /** Explicit WorkBuddy desktop auth-file path, overriding env and platform defaults. */
   authFile?: string;
 }
-declare const Config$2: z<Config$2>;
+declare const Config$3: z<Config$3>;
 /**
  * Start the loopback endpoint, register the `workbuddy` provider, and
  * refresh the model catalog from the upstream once credentials allow it.
  * The static fallback catalog serves from the first moment, so an offline
  * upstream never leaves the provider empty.
  */
-declare function applyWorkBuddyPlugin(ctx: Context, config: Config$2): void;
+declare function applyWorkBuddyPlugin(ctx: Context, config: Config$3): void;
 //#endregion
 //#region src/drivers/loomy/plugin.d.ts
 /** Settings namespace owning the Loomy configuration card. */
@@ -46,6 +46,29 @@ declare const Config$1: z<Config$1>;
  * never leaves the provider empty.
  */
 declare function applyLoomyPlugin(ctx: Context, config: Config$1): void;
+//#endregion
+//#region src/drivers/qoder/plugin.d.ts
+/** Settings namespace owning the Qoder configuration card. */
+declare const QODER_SETTINGS_NS: SettingsNamespace;
+/** Qoder driver configuration. */
+interface Config$2 {
+  /** Explicit Qoder auth directory, overriding env and platform defaults. */
+  authDir?: string;
+  /**
+   * Write a rotated refresh token back into the Qoder app's own credential
+   * file. Default true; see the driver's auth module for why turning it off
+   * eventually forces a re-sign-in in the Qoder app.
+   */
+  writeBack?: boolean;
+}
+declare const Config$2: z<Config$2>;
+/**
+ * Start the loopback endpoint, register the `qoder` provider, and refresh the
+ * model catalog from the upstream once a credential is available. The static
+ * fallback catalog serves from the first moment, so an offline upstream never
+ * leaves the provider empty.
+ */
+declare function applyQoderPlugin(ctx: Context, config: Config$2): void;
 //#endregion
 //#region src/core/catalog.d.ts
 /**
@@ -865,22 +888,714 @@ declare function loomyStatusHandler(deps: LoomyStatusRouteOptions): (req: Incomi
 /** Mount the GET status route on an optional webServer context. */
 declare function registerLoomyStatusRoute(ctx: Context, deps: LoomyStatusRouteOptions): void;
 //#endregion
+//#region src/drivers/qoder/credential.d.ts
+/**
+ * Qoder's credential shape, its on-disk document, and the pure derivations
+ * between them.
+ *
+ * The interesting facts, all established by reversing the app (see
+ * `docs/qoder-driver-research.md`):
+ *
+ * - The credential document is **sealed** with a 16-character key that is
+ *   *not* stored anywhere: `key = machine_id.trim().slice(0, 16)`. The machine
+ *   id sits next to the credential and is itself a plain-text UUID, so the key
+ *   is ASCII, not binary — the detail that kept an earlier attempt stuck.
+ * - `encrypt_user_info` and `key` look like credential fields but are **empty
+ *   on disk**. They are regenerated at every launch by the wasm from the
+ *   account identity (`uid` + organization + data-policy) and must be present
+ *   on every authenticated request; omitting them is a `403 Signature invalid`
+ *   with no other symptom.
+ * - `expire_time` is epoch **milliseconds**, not seconds.
+ * - The refresh token **rotates** on every refresh, so a refreshed credential
+ *   has to be written back or the user's app is left holding a dead token.
+ *
+ * Nothing here performs I/O: the file layout lives in `auth.ts`, the wasm
+ * calls in `wasm.ts`. Keeping the derivations pure is what lets them be tested
+ * without a Qoder install.
+ *
+ * @module dsh-llm-bridge/drivers/qoder/credential
+ */
+/** Length of the credential key; AES-128, so 16 bytes' worth of ASCII. */
+declare const QODER_CREDENTIAL_KEY_LENGTH = 16;
+/** The app's own credential document, kept opaque. */
+type QoderUserInfo = Record<string, unknown>;
+/** One refresh answer, normalized. */
+interface QoderRefreshOutcome {
+  /** New device token (`dt-…`); becomes both `access_token` and `security_oauth_token`. */
+  deviceToken: string;
+  /** Rotated refresh token (`drt-…`); the app's stored one is dead without it. */
+  refreshToken: string;
+  expiresAtMs: number;
+  refreshExpiresAtMs?: number;
+}
+/** Normalized Qoder credential, timestamps in epoch milliseconds. */
+interface QoderCredential {
+  /** Raw access credential put on the wire by the wasm. */
+  accessToken: string;
+  /** Rotating refresh token; a single use invalidates it. */
+  refreshToken: string;
+  expiresAtMs: number;
+  refreshExpiresAtMs?: number;
+  /**
+   * The machine id. It is both the pairing half of the credential files and
+   * the source of the sealing key ({@link qoderCredentialKey}).
+   */
+  machineId: string;
+  uid: string;
+  /** Account label for diagnostics; the app shows a display name, never the uid. */
+  displayName?: string;
+  userType?: string;
+  userTag?: string;
+  organizationId: string;
+  /** Always an array: the wasm rejects `null` for this field. */
+  organizationTags: readonly string[];
+  dataPolicyAgreed: boolean;
+  /**
+   * The app's own document, carried so a rotation can be re-sealed with every
+   * untouched field intact. Never logged, never sent anywhere, and never
+   * exposed through {@link QoderAuthStatus}.
+   */
+  rawUserInfo: QoderUserInfo;
+}
+/** Read-only sign-in summary for status, doctor, and the plugin card. */
+interface QoderAuthStatus {
+  state: 'signed-in' | 'signed-out';
+  expiresAtMs?: number;
+  refreshExpiresAtMs?: number;
+  /** Display name only — never the uid. */
+  nickname?: string;
+  /** Plan tag the app reports, e.g. `Pro`. */
+  userTag?: string;
+}
+/**
+ * Derive the credential sealing key from the machine id.
+ *
+ * `machine_id` is a 36-character UUID; the key is its first 16 characters,
+ * verbatim. The SDK also computes `sha256(machine_id)` at one point, which is
+ * a *liveness fingerprint* for a different guard — it is not part of the key
+ * derivation, and treating it as one is what made this look unreachable.
+ */
+declare function qoderCredentialKey(machineId: string): string;
+/** Whether a machine id can produce a usable key. */
+declare function isUsableMachineId(machineId: string): boolean;
+/** Coerce the app's `organization_tags` into the array the wasm demands. */
+declare function normalizeOrganizationTags(value: unknown): readonly string[];
+/**
+ * Resolve an epoch-millisecond timestamp from either spelling the app uses:
+ * a number (seconds or milliseconds) or an ISO-8601 string.
+ */
+declare function epochMsOf(value: unknown): number | undefined;
+/** Project the app's document plus the machine id into a credential. */
+declare function credentialFromUserInfo(userInfo: QoderUserInfo, machineId: string): QoderCredential;
+/**
+ * Normalize a `POST /api/v1/deviceToken/refresh` answer.
+ *
+ * The endpoint's field names have moved around between builds, so both the
+ * `refresh_token_expires_at` and `refresh_token_expire_at` spellings are
+ * accepted. A missing new refresh token is not an error worth inventing a
+ * value for: the driver keeps the old one only when the server omits the
+ * field, because a silently blanked token would sign the user out.
+ */
+declare function parseQoderRefreshResponse(payload: unknown): QoderRefreshOutcome;
+/**
+ * Fold a refresh answer into the app's document.
+ *
+ * Every other field — including ones this driver does not understand — is
+ * preserved, because the result is re-sealed and written back to the file the
+ * app reads. `access_token` and `security_oauth_token` are two views of the
+ * same device token and must move together; leaving one behind produced a 403
+ * in testing.
+ */
+declare function mergeRefreshOutcome(userInfo: QoderUserInfo, outcome: QoderRefreshOutcome): QoderUserInfo;
+/**
+ * The input `generate_runtime_auth_fields` is seeded with: account identity
+ * plus data-policy consent, and nothing else.
+ */
+declare function runtimeAuthFieldsInput(credential: {
+  uid: string;
+  organizationId: string;
+  organizationTags: readonly string[];
+  dataPolicyAgreed: boolean;
+}): string;
+/**
+ * The `userInfo` JSON the signing context is constructed with.
+ *
+ * The two derived fields are the load-bearing part: `encrypt_user_info` and
+ * `key` are empty in the stored document, so the caller must pass what
+ * `generate_runtime_auth_fields` produced. This is exactly the SDK's
+ * `regenerateRuntimeFields()` + `getUserInfoForAuth()` pair.
+ */
+declare function signingUserInfo(credential: {
+  uid: string;
+  organizationId: string;
+  organizationTags: readonly string[];
+  dataPolicyAgreed: boolean;
+}, generated: {
+  encrypt_user_info: string;
+  key: string;
+}): string;
+//#endregion
+//#region src/drivers/qoder/wasm.d.ts
+/**
+ * Qoder's own WebAssembly module, driven from plain Node.
+ *
+ * Qoder signs its requests with a wasm export rather than a documented
+ * algorithm: `QoderContext.prepareInferRequest` builds the signed URL, the
+ * full COSY header set, and a *sealed* request body, and
+ * `decrypt_server_response` opens the payloads it gets back. None of that is
+ * reimplemented here — the module is embedded verbatim (see
+ * `vendor/artifacts.ts`, regenerated by `scripts/vendor-qoder-wasm.mjs`) and
+ * invoked through the same wrappers the app itself uses.
+ *
+ * Two pieces come together to make the module callable:
+ *
+ * 1. **The wasm-bindgen glue**, taken verbatim from the app. The app ships an
+ *    *unobfuscated* copy of it inside its own `out/main/main.js` bundle, so it
+ *    needs no reverse engineering. It provides the linear-memory helpers, the
+ *    JS import table, and `initSync`.
+ * 2. **The wrappers** for the exports the glue's copy does not include —
+ *    `QoderContext`, `RequestResult`, the credential helpers and
+ *    `generate_runtime_auth_fields`. These are lifted from the app's
+ *    *obfuscated* worker bundle and are kept byte-for-byte in spirit: the
+ *    short identifier names, the stack-pointer dance and the
+ *    `takeObject`/`getStringFromWasm0` protocol are exactly the SDK's, so a
+ *    future Qoder release can be diffed against them.
+ *
+ * Glue and wrappers are concatenated into one function scope because the glue
+ * keeps the instantiated exports in a module-local `wasm` binding that the
+ * wrappers close over. `initSync` populates it, which is why the assembly is
+ * built once and cached.
+ *
+ * @module dsh-llm-bridge/drivers/qoder/wasm
+ */
+/** Logger sink for the glue's own `WASM` category (loads and traps). */
+interface QoderWasmLogger {
+  info(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+  debug(...args: unknown[]): void;
+  trace(...args: unknown[]): void;
+}
+/** One signed/serialized request the wasm produced. */
+interface QoderRequestResult {
+  /** Absolute URL, with the wasm's own query parameters applied. */
+  readonly url: string;
+  /** Request body; sealed unless the endpoint is unsigned. */
+  readonly body: string;
+  /** Header map as the wasm builds it (a JS `Map`). */
+  readonly headers: ReadonlyMap<string, string>;
+  /** Release the wasm-side allocation. Safe to call once. */
+  free(): void;
+}
+/** A wasm-side context: one per request (the server rejects reused signatures). */
+interface QoderContextHandle {
+  /**
+   * Build the inference request: signed URL, COSY headers, sealed body.
+   * `modelSource` is the catalog's `source` field (`system` for the models
+   * this driver serves).
+   */
+  prepareInferRequest(base: string, body: string, modelKey?: string, modelSource?: string): QoderRequestResult;
+  /** Build a non-inference request in `auth` or anonymous `sign` mode. */
+  prepareRequest(base: string, path: string, method: string, mode: 'auth' | 'sign', body?: string, extra?: string): QoderRequestResult;
+  /** Re-seed the auth fields after a token refresh. */
+  refreshAuthFields(userInfoJson: string): void;
+  /** Release the wasm-side context. Safe to call once. */
+  free(): void;
+}
+/** The surface of Qoder's auth wasm that this driver uses. */
+interface QoderWasmApi {
+  /** Open a credential blob with a 16-character key. */
+  credential_storage_decrypt(blob: string, key: string): string;
+  /** Seal a credential document with the same key (deterministic). */
+  credential_storage_encrypt(plaintext: string, key: string): string;
+  /** Open a sealed server payload. Throws when the payload is not sealed. */
+  decrypt_server_response(payload: string): string;
+  /**
+   * Derive the per-session auth fields (`encrypt_user_info`, `key`) from the
+   * account identity. They are *not* stored on disk — they are regenerated on
+   * every launch, and every authenticated request is rejected without them.
+   */
+  generate_runtime_auth_fields(inputJson: string): string;
+  /** Instantiate a request-signing context. */
+  createContext(machineId: string, cosyVersion: string, userInfoJson: string, clientMetadataJson: string): QoderContextHandle;
+  /** The module's instantiated exports; exposed for diagnostics and tests. */
+  readonly exports: Readonly<Record<string, unknown>>;
+}
+/**
+ * Instantiate the embedded module and return the callable surface.
+ *
+ * The instantiation is single-shot per process: the glue keeps its exports in
+ * one local binding and `initSync` short-circuits on a second call, so caching
+ * the assembled API also keeps the wrapper closures pointed at the live
+ * instance.
+ *
+ * @param logger - receives the glue's own `WASM` category output. Defaults to
+ *   a no-op sink; pass the plugin logger to surface load failures and traps.
+ */
+declare function loadQoderWasm(logger?: QoderWasmLogger): QoderWasmApi;
+/**
+ * Open a server payload, falling back to the raw text.
+ *
+ * Qoder seals *most* responses but not all: the inference SSE frames arrive as
+ * plain JSON while `region/endpoints` and `model/list` are sealed. The app's
+ * own SDK wraps every read in exactly this try/catch, and a driver that skips
+ * the fallback turns a readable stream into silence.
+ */
+declare function openServerPayload(api: QoderWasmApi, payload: string): string;
+//#endregion
+//#region src/drivers/qoder/auth.d.ts
+/** Constructor options; only {@link refresh} is required. */
+interface QoderStoreOptions {
+  /** Explicit auth directory, overriding env and platform defaults. */
+  authDir?: string;
+  /** Performs the upstream token refresh. */
+  refresh: (credential: QoderCredential) => Promise<QoderRefreshOutcome>;
+  /** Refresh this long before actual expiry; default five minutes. */
+  refreshMarginMs?: number;
+  /**
+   * Re-seal and write the rotated credential back into the app's own file.
+   * Default `true`; turning it off leaves the Qoder app to sign in again after
+   * the token it holds is rotated away.
+   */
+  writeBack?: boolean;
+  /** Injected wasm module; defaults to the embedded one. */
+  api?: QoderWasmApi;
+}
+/** What one completed rotation did with the app's file. */
+type QoderWriteBackOutcome = {
+  kind: 'written';
+  path: string;
+  backupPath: string;
+} | {
+  kind: 'skipped-disabled';
+} | {
+  kind: 'superseded';
+};
+/**
+ * Platform-default auth directories, in probe order, as
+ * `<home>/.qoderworkcn/<sub>` for each candidate subdirectory.
+ */
+declare function defaultAuthDirectoryCandidates(): string[];
+/**
+ * Read-only credential store with demand-driven refresh and rotation
+ * write-back.
+ *
+ * The credential itself is never cached: each read decrypts the current file,
+ * so a rotation performed by the Qoder app itself is picked up immediately.
+ */
+declare class QoderCredentialStore {
+  private readonly refresh;
+  private readonly refresher;
+  private readonly writeBack;
+  private readonly injectedApi;
+  private authDirOverride;
+  /** Last directory that yielded a credential; the write-back target. */
+  private lastLocation;
+  /** Raw credential file text at the moment it was decrypted, for the
+   *  optimistic concurrency check before a write-back. */
+  private lastBlob;
+  constructor(options: QoderStoreOptions);
+  /** The wasm module, loaded on first use. */
+  private api;
+  /**
+   * Auth directories to probe. Precedence: an explicit directory (plugin
+   * configuration), then the environment variable, then the platform defaults.
+   * An explicit value is used verbatim; the defaults are a probe order.
+   */
+  private candidates;
+  /** Repoint the auth directory; a settings change applies on the next read. */
+  setAuthDir(directory: string | undefined): void;
+  /** The directory probed first, for diagnostics. */
+  authDirPath(): string | undefined;
+  /** The credential file probed first, for diagnostics. */
+  credentialPath(): string | undefined;
+  /** Whether any candidate holds both halves of the credential. */
+  authDirPresent(): Promise<boolean>;
+  /**
+   * Read the stored credential without refreshing anything.
+   *
+   * A candidate must hold both the machine id and the credential; a half
+   * present directory is skipped rather than paired with a machine id from a
+   * different directory, which would silently fail to decrypt.
+   */
+  current(): Promise<QoderCredential | undefined>;
+  /**
+   * The credential to send upstream: {@link current}, refreshed on demand.
+   * Single-flight, so parallel requests share one refresh.
+   */
+  resolve(): Promise<QoderCredential>;
+  /** Read-only sign-in summary; never refreshes and never throws. */
+  status(): Promise<QoderAuthStatus>;
+  /**
+   * No-op: this driver owns no credential copy.
+   *
+   * The credential lives in the Qoder app's own file, and the driver must keep
+   * writing rotations back to it, so there is nothing separable to remove. A
+   * user who wants the bridge to stop using their account signs out in Qoder.
+   */
+  logout(): Promise<void>;
+  /**
+   * Perform the Qoder refresh, then re-seal the result into the app's file.
+   *
+   * The no-refresh-token short-circuit and the error wording are what the
+   * pre-refactor shape produced; the core refresher wraps this with the
+   * still-valid fallback.
+   */
+  private refreshCredential;
+  /**
+   * Re-seal `userInfo` and replace the app's credential file with it.
+   *
+   * Verification happens *before* the backup and the write: the sealed text is
+   * decrypted and checked, so a sealing mistake aborts with the original file
+   * still intact.
+   */
+  private writeBackCredential;
+}
+//#endregion
+//#region src/drivers/qoder/upstream.d.ts
+/** Chat answer: either a live (translated) SSE response or a classified failure. */
+type QoderChatResult = BridgeChatResult;
+/** The concrete thinking-effort spellings Qoder declares on the wire. */
+type QoderEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+/** Reasoning metadata the upstream catalog declares for one model. */
+interface QoderModelReasoning {
+  supports: boolean;
+  /** Selectable effort values, from `thinking_config.enabled.efforts`. */
+  supportedEfforts?: readonly QoderEffort[];
+  /** The effort the catalog marks as default. */
+  defaultEffort?: QoderEffort;
+  /**
+   * Whether the catalog declares a disabled state (`thinking_config.disabled`).
+   *
+   * Carried faithfully but **not** turned into a switch by the adapter: the
+   * inference endpoint accepts any string for `reasoning_effort` (verified —
+   * including values that mean nothing), so sending a guessed "off" spelling
+   * would produce a control that appears to work and silently does not.
+   */
+  canDisableThinking: boolean;
+}
+/** Offer facts the upstream catalog declares for one model. */
+interface QoderModelBilling {
+  /** Price multiplier in display form, e.g. `x0.8`. */
+  credits?: string;
+  /** Promotional badges in the catalog's own spelling, e.g. `错峰 4 折`. */
+  badges?: readonly string[];
+  /** Whether the catalog marks the model free. */
+  free: boolean;
+}
+/** One model as the catalog describes it. */
+interface QoderModelInfo {
+  id: string;
+  name: string;
+  contextWindow: number;
+  maxTokens: number;
+  supportsImages: boolean;
+  reasoning?: QoderModelReasoning;
+  billing?: QoderModelBilling;
+  /** Catalog `source`; `system` is what this driver can serve. */
+  source: string;
+}
+/** Nodes the region endpoint reports. */
+interface QoderEndpoints {
+  centerNodes: readonly string[];
+  inferNodes: readonly string[];
+  openapiNodes: readonly string[];
+}
+/**
+ * Classify an upstream failure from its HTTP status and body excerpt.
+ *
+ * `403` is overloaded here: the endpoint answers `Signature invalid` (the
+ * credential or the auth fields are stale — re-signing in is the remedy) and
+ * `Duplicate request` (the driver reused a signature) with the same status.
+ * They are told apart by body before the status is considered.
+ */
+declare function classifyQoderError(status: number, body: string): BridgeErrorKind;
+/** Project one catalog row into a model record, or undefined when unusable. */
+declare function mapQoderModel(row: unknown): QoderModelInfo | undefined;
+/**
+ * Normalize an OpenAI chat body for Qoder.
+ *
+ * Verified against the live endpoint: the deserializer is permissive — unknown
+ * fields, `tool_choice`, `tools`, `max_completion_tokens` and a `developer`
+ * role are all accepted with HTTP 200 — so the body is passed through almost
+ * untouched rather than reduced to a whitelist, which would silently drop
+ * capabilities the platform does support.
+ *
+ * Three changes are made:
+ *
+ * 1. `stream` is forced true; the endpoint only answers in SSE.
+ * 2. `request_id` and `task_id` are stamped fresh. The wasm already gives every
+ *    signature its own nonce (which is what the server's duplicate detection
+ *    keys on), but carrying a caller-supplied constant here reuses a request
+ *    identity across calls and buys nothing. `session_id` is preserved when
+ *    present, because grouping is a real semantic, and generated otherwise.
+ * 3. `role: "developer"` is rewritten to `"system"`. The endpoint accepts
+ *    `developer` without complaining, which is exactly why this matters: an
+ *    unrecognized role could be dropped silently, and the dropped message would
+ *    be the system prompt. `system` is the spelling that is certainly honored.
+ */
+declare function prepareQoderChatBody(source: string): string;
+/** The catalog key a chat body selects. */
+declare function modelKeyOf(bodyJson: string): string;
+/**
+ * Translate Qoder's enveloped SSE into ordinary OpenAI SSE.
+ *
+ * The core pipes a driver's response body verbatim, so the unwrapping has to
+ * happen here: the DSH client parses `data: <chunk>` frames, and Qoder's
+ * frames carry the chunk one level down inside an envelope's `body` string.
+ *
+ * Frames that are not chat chunks are dropped rather than forwarded — the
+ * trailing `event: finish` carries timings, and forwarding a shapeless object
+ * to the client would end the turn with a parse error.
+ *
+ * A server-side error arriving mid-stream is surfaced as an OpenAI-style
+ * `{"error": …}` frame followed by `[DONE]`, because by then the HTTP status
+ * is long since committed and silence would look like a successful empty
+ * answer.
+ */
+declare function translateQoderStream(api: QoderWasmApi, body: ReadableStream<Uint8Array> | null, logger?: ShimLogger): ReadableStream<Uint8Array>;
+/** Constructor dependencies. */
+interface QoderUpstreamOptions {
+  /** Injected wasm module; defaults to the embedded one. */
+  api?: QoderWasmApi;
+  /** Injected logger for stream anomalies and discovery failures. */
+  logger?: ShimLogger;
+  /** Override the inference host (diagnostics and tests). */
+  gatewayBase?: string;
+}
+/**
+ * Upstream client. One instance serves the whole plugin; requests take the
+ * credential explicitly so a rotation applies on the next call.
+ */
+declare class QoderUpstreamClient {
+  private readonly injectedApi;
+  private readonly logger;
+  private readonly gatewayOverride;
+  private endpointsCache;
+  constructor(options?: QoderUpstreamOptions);
+  private api;
+  /**
+   * Build a signing context.
+   *
+   * A fresh context per request is mandatory, not tidiness: the wasm stamps
+   * each one with its own request nonce, and reusing a context reuses the
+   * nonce, which the server rejects with `Duplicate request`. The auth fields
+   * are derived here because the stored credential leaves them empty.
+   */
+  private buildContext;
+  /** Build a signed inference request and copy it out of wasm memory. */
+  private signInferRequest;
+  /**
+   * The inference host, from the cached discovery answer.
+   *
+   * Discovery is a plain HTTP call whose response is sealed; it is not needed
+   * for signing, so {@link signInferRequest} cannot await it. The cache is
+   * primed by {@link discoverEndpoints} (called at plugin start and before the
+   * catalog fetch) and otherwise falls back to the constant the endpoint
+   * currently answers with.
+   */
+  private inferBase;
+  /**
+   * Resolve the region's node list and cache the inference host.
+   *
+   * Verified to need no wasm signing at all: a bearer device token plus the
+   * machine id headers is enough, and the answer comes back sealed.
+   */
+  discoverEndpoints(credential: QoderCredential): Promise<QoderEndpoints | undefined>;
+  /**
+   * POST the inference endpoint; a successful answer is an SSE stream already
+   * translated into ordinary OpenAI frames.
+   */
+  chatStream(credential: QoderCredential, bodyJson: string, signal?: AbortSignal): Promise<QoderChatResult>;
+  /**
+   * POST the device-token refresh.
+   *
+   * The answer's refresh token is a *rotation*: the one sent here stops
+   * working, so the caller must persist the result (the store writes it back).
+   */
+  refreshToken(credential: QoderCredential): Promise<QoderRefreshOutcome>;
+  /**
+   * GET the model catalog and keep the rows this driver can serve.
+   *
+   * Only `source: system` rows are kept — a BYOK row would need the user's own
+   * key — and only `format: openai` rows are meaningful through a
+   * chat-completions shim. `enable` is deliberately **not** filtered on: the
+   * catalog uses it as a UI default, and a model with `enable: false` (for
+   * example `dmodel`) has been driven successfully end to end.
+   */
+  fetchModels(credential: QoderCredential): Promise<readonly QoderModelInfo[]>;
+}
+//#endregion
+//#region src/drivers/qoder/catalog.d.ts
+/** One model entry the adapter exposes. */
+type QoderModelEntry = QoderModelInfo;
+/**
+ * The `chat` roster as observed on 2026-09-16 (14 models, all
+ * `format: openai`, `source: system`). The upstream refresh replaces this list
+ * at startup; it exists so the provider registers with a usable catalog even
+ * while the first fetch is in flight or offline.
+ *
+ * Every field is transcribed from the live catalog rather than guessed:
+ * `contextWindow` is the default tier of `context_config`,
+ * `supportedEfforts`/`defaultEffort`/`canDisableThinking` come from
+ * `thinking_config`, and `credits` is `price_factor` in display form.
+ *
+ * `maxTokens` is the one field the catalog does not declare, so it carries the
+ * driver's shared default (@see DEFAULT_MAX_OUTPUT_TOKENS). Models whose rows
+ * declare no effort ladder (`supportedEfforts` absent) are reasoning models
+ * whose selectable set is client-side knowledge the catalog does not carry;
+ * they get no thinking control, matching the WorkBuddy driver's handling of the
+ * same situation.
+ */
+declare const FALLBACK_QODER_MODELS: readonly QoderModelEntry[];
+/**
+ * Mutable Qoder catalog seeded with the fallback roster; shared by the shim's
+ * `/v1/models` and the adapter.
+ */
+declare class QoderCatalog extends Catalog<QoderModelEntry> {
+  constructor();
+}
+//#endregion
+//#region src/drivers/qoder/meta.d.ts
+/**
+ * Qoder provider metadata shared across the driver's auth, upstream, adapter,
+ * shim and plugin.
+ *
+ * Everything here is a Qoder-private fact: the provider route id, the two
+ * hosts the app talks to, the on-disk auth directory layout, and the client
+ * metadata string the wasm's signing context is seeded with.
+ *
+ * @module dsh-llm-bridge/drivers/qoder/meta
+ */
+/** Provider route this driver owns. */
+declare const QODER_PROVIDER = "qoder";
+/** Human-facing provider name in the DSH model pickers. */
+declare const QODER_DISPLAY_NAME = "Qoder";
+/** Provider idle ceiling while one stream read is outstanding. */
+declare const QODER_STREAM_IDLE_TIMEOUT_MS = 300000;
+/**
+ * The COSY protocol version the wasm signs with. It is a field of the signed
+ * payload, so it tracks the app release rather than this package: re-vendor
+ * the wasm (`scripts/vendor-qoder-wasm.mjs`) and bump this together.
+ */
+declare const QODER_COSY_VERSION = "1.1.26";
+/** Host serving token refresh (`/api/v1/deviceToken/refresh`). */
+declare const QODER_OPENAPI_BASE = "https://openapi.qoder.com.cn";
+/**
+ * Default host for node discovery and inference. The app resolves this
+ * dynamically through `/algo/api/v4/service/region/endpoints`; the driver
+ * tries that first and falls back to this constant, which is what the
+ * endpoint currently answers with.
+ */
+declare const QODER_GATEWAY_BASE = "https://gateway.qoder.com.cn";
+/** Scene the driver declares, and the catalogs it reads (`models[scene]`). */
+declare const QODER_SCENE = "assistant";
+/**
+ * Client metadata the wasm signing context is seeded with.
+ *
+ * `client_type: 5` is the CLI surface. The scene has to match the catalog
+ * scene the model keys were read from, and `agent_common` in the inference
+ * path is the agent those keys are valid for.
+ */
+declare const QODER_CLIENT_METADATA: {
+  readonly client_type: 5;
+  readonly business_product: "cli";
+  readonly business_type: "agent";
+  readonly scene: "assistant";
+};
+/** Agent id the inference endpoint is scoped to. */
+declare const QODER_AGENT_ID = "agent_common";
+/** Model key standing in for "let Qoder pick", valid for every scene. */
+declare const QODER_AUTO_MODEL = "auto";
+/** Env variable overriding the auth directory (used by tests and diagnostics). */
+declare const QODER_AUTH_DIR_ENV = "QODER_AUTH_DIR";
+//#endregion
+//#region src/drivers/qoder/adapter.d.ts
+/** Constructor dependencies. */
+interface QoderAdapterOptions {
+  shim: BridgeShim;
+  /**
+   * Credential store. The core adapter authenticates via the shim secret, so
+   * this is not read on the request path; it remains part of the driver's
+   * assembly surface for parity.
+   */
+  store: QoderCredentialStore;
+  catalog: QoderCatalog;
+  /** Resolve the durable attachment service at request time, when present. */
+  resolveAttachments?: () => AttachmentStore | undefined;
+}
+/** What {@link createQoderAdapter} hands back. */
+type QoderAdapter = BridgeAdapter;
+/**
+ * Assemble the Qoder adapter through the core seam. The provider's
+ * `getModels` reads the live catalog, and every model's `baseUrl` is
+ * re-resolved per read so the shim's ephemeral port applies from the first
+ * snapshot after startup.
+ */
+declare function createQoderAdapter(options: QoderAdapterOptions): QoderAdapter;
+//#endregion
+//#region src/drivers/qoder/shim.d.ts
+/** What the plugin needs from a running shim. */
+type QoderShim = BridgeShim;
+/** Constructor dependencies. */
+interface QoderShimOptions {
+  store: QoderCredentialStore;
+  client: Pick<QoderUpstreamClient, 'chatStream'>;
+  catalog: QoderCatalog;
+  logger?: ShimLogger;
+}
+/**
+ * Start the Qoder loopback endpoint. Requests carry the shim shared secret;
+ * the Qoder device token is resolved from the store inside the core shim and
+ * never reaches pi-ai.
+ */
+declare function createQoderShim(options: QoderShimOptions): QoderShim;
+//#endregion
+//#region src/drivers/qoder/heartbeat.d.ts
+/** Basename of the host heartbeat file inside the Harness home. */
+declare const QODER_HOST_HEARTBEAT_FILENAME = ".qoder-host-heartbeat.json";
+/** On-disk shape of the heartbeat. */
+type QoderHostHeartbeat = HostHeartbeat;
+/** Absolute path of the host heartbeat file. */
+declare const qoderHostHeartbeatPath: () => string;
+//#endregion
+//#region src/drivers/qoder/status-paths.d.ts
+/** Plugin-owned status endpoint consumed by the Qoder browser card. */
+declare const QODER_STATUS_PATH = "/plugins/dsh-llm-bridge/qoder/status";
+/** The JSON document the Qoder plugin card renders (the generic shape). */
+type QoderWebStatus = DriverWebStatus;
+//#endregion
+//#region src/drivers/qoder/web-status.d.ts
+/** Constructor dependencies. */
+interface QoderStatusRouteOptions {
+  store: QoderCredentialStore;
+  /** Current catalog, read live so a refresh is reflected immediately. */
+  models: () => readonly QoderModelEntry[];
+}
+/** Assemble the card's status document. */
+declare function qoderWebStatus(deps: QoderStatusRouteOptions): Promise<QoderWebStatus>;
+/** The status route's request handler, extracted so tests can mount it bare. */
+declare function qoderStatusHandler(deps: QoderStatusRouteOptions): (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+/** Mount the GET status route on an optional webServer context. */
+declare function registerQoderStatusRoute(ctx: Context, deps: QoderStatusRouteOptions): void;
+//#endregion
 //#region src/index.d.ts
 /** Plugin configuration: one optional section per driver. */
 interface Config {
-  workbuddy?: Config$2;
+  workbuddy?: Config$3;
   loomy?: Config$1;
+  qoder?: Config$2;
 }
 declare const Config: z<Config>;
 /** Stable Cordis plugin name. */
 declare const name = "llm-bridge";
-/** The model registry required before either provider can register. */
+/** The model registry required before any provider can register. */
 declare const inject: string[];
 /**
  * Compose the core mechanisms with every shipped driver and register their
- * providers (`workbuddy`, `loomy`). Streaming, tool calls, compaction, and
- * permissions stay Harness-owned.
+ * providers (`workbuddy`, `loomy`, `qoder`). Streaming, tool calls,
+ * compaction, and permissions stay Harness-owned.
  */
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { Config, FALLBACK_LOOMY_MODELS, FALLBACK_WORKBUDDY_MODELS, LOOMY_DISPLAY_NAME, LOOMY_HOST_HEARTBEAT_FILENAME, LOOMY_PROVIDER, LOOMY_SESSION_FILENAME, LOOMY_SESSION_FILE_ENV, LOOMY_SETTINGS_NS, LOOMY_STATUS_PATH, LOOMY_STREAM_IDLE_TIMEOUT_MS, type LoomyAdapter, type LoomyAdapterOptions, type LoomyAuthStatus, LoomyCatalog, type LoomyChatResult, Config$1 as LoomyDriverConfig, type LoomyEffort, type LoomyHostHeartbeat, type LoomyModelEntry, type LoomyModelInfo, type LoomyModelReasoning, type LoomySession, LoomySessionStore, type LoomyShim, type LoomyShimOptions, type LoomyStatusRouteOptions, LoomyUpstreamClient, type LoomyWebStatus, type UpstreamErrorKind, WORKBUDDY_AUTH_FILENAME, WORKBUDDY_AUTH_FILE_ENV, WORKBUDDY_DISPLAY_NAME, WORKBUDDY_HOST_HEARTBEAT_FILENAME, WORKBUDDY_PROVIDER, WORKBUDDY_SETTINGS_NS, WORKBUDDY_STATUS_PATH, WORKBUDDY_STREAM_IDLE_TIMEOUT_MS, type WorkBuddyAdapter, type WorkBuddyAdapterOptions, type WorkBuddyAuthStatus, WorkBuddyCatalog, type WorkBuddyChatResult, type Config$2 as WorkBuddyConfig, type WorkBuddyCredential, WorkBuddyCredentialStore, type WorkBuddyCredits, type WorkBuddyEffort, type WorkBuddyHostHeartbeat, type WorkBuddyModelBilling, type WorkBuddyModelInfo, type WorkBuddyModelReasoning, type WorkBuddyRefreshOutcome, type WorkBuddyShim, type WorkBuddyShimOptions, type WorkBuddyStatusRouteOptions, type WorkBuddyStoreOptions, WorkBuddyUpstreamClient, type WorkBuddyUpstreamModel, type WorkBuddyWebStatus, apply, applyLoomyPlugin, applyWorkBuddyPlugin, classifyLoomyError, classifyUpstreamError, clearHostHeartbeat, createLoomyAdapter, createLoomyShim, createWorkBuddyAdapter, createWorkBuddyShim, defaultDesktopAuthCandidates, defaultDesktopAuthPath, defaultSessionCandidates, defaultSessionPath, inject, isHeartbeatProcessAlive, loomyHostHeartbeatPath, loomyStatusHandler, loomyWebStatus, name, normalizeCredits, parseLoomySession, parseWorkBuddyAuth, prepareChatBody, prepareLoomyChatBody, processStartTimeMs, readHostHeartbeat, regionOf, registerLoomyStatusRoute, registerWorkBuddyStatusRoute, workBuddyStatusHandler, workBuddyWebStatus, workbuddyHostHeartbeatPath, workbuddyOwnAuthPath };
+export { Config, FALLBACK_LOOMY_MODELS, FALLBACK_QODER_MODELS, FALLBACK_WORKBUDDY_MODELS, LOOMY_DISPLAY_NAME, LOOMY_HOST_HEARTBEAT_FILENAME, LOOMY_PROVIDER, LOOMY_SESSION_FILENAME, LOOMY_SESSION_FILE_ENV, LOOMY_SETTINGS_NS, LOOMY_STATUS_PATH, LOOMY_STREAM_IDLE_TIMEOUT_MS, type LoomyAdapter, type LoomyAdapterOptions, type LoomyAuthStatus, LoomyCatalog, type LoomyChatResult, Config$1 as LoomyDriverConfig, type LoomyEffort, type LoomyHostHeartbeat, type LoomyModelEntry, type LoomyModelInfo, type LoomyModelReasoning, type LoomySession, LoomySessionStore, type LoomyShim, type LoomyShimOptions, type LoomyStatusRouteOptions, LoomyUpstreamClient, type LoomyWebStatus, QODER_AGENT_ID, QODER_AUTH_DIR_ENV, QODER_AUTO_MODEL, QODER_CLIENT_METADATA, QODER_COSY_VERSION, QODER_CREDENTIAL_KEY_LENGTH, QODER_DISPLAY_NAME, QODER_GATEWAY_BASE, QODER_HOST_HEARTBEAT_FILENAME, QODER_OPENAPI_BASE, QODER_PROVIDER, QODER_SCENE, QODER_SETTINGS_NS, QODER_STATUS_PATH, QODER_STREAM_IDLE_TIMEOUT_MS, type QoderAdapter, type QoderAdapterOptions, type QoderAuthStatus, QoderCatalog, type QoderChatResult, type QoderContextHandle, type QoderCredential, QoderCredentialStore, Config$2 as QoderDriverConfig, type QoderEffort, type QoderEndpoints, type QoderHostHeartbeat, type QoderModelBilling, type QoderModelEntry, type QoderModelInfo, type QoderModelReasoning, type QoderRefreshOutcome, type QoderRequestResult, type QoderShim, type QoderShimOptions, type QoderStatusRouteOptions, type QoderStoreOptions, QoderUpstreamClient, type QoderUpstreamOptions, type QoderUserInfo, type QoderWasmApi, type QoderWasmLogger, type QoderWebStatus, type QoderWriteBackOutcome, type UpstreamErrorKind, WORKBUDDY_AUTH_FILENAME, WORKBUDDY_AUTH_FILE_ENV, WORKBUDDY_DISPLAY_NAME, WORKBUDDY_HOST_HEARTBEAT_FILENAME, WORKBUDDY_PROVIDER, WORKBUDDY_SETTINGS_NS, WORKBUDDY_STATUS_PATH, WORKBUDDY_STREAM_IDLE_TIMEOUT_MS, type WorkBuddyAdapter, type WorkBuddyAdapterOptions, type WorkBuddyAuthStatus, WorkBuddyCatalog, type WorkBuddyChatResult, type Config$3 as WorkBuddyConfig, type WorkBuddyCredential, WorkBuddyCredentialStore, type WorkBuddyCredits, type WorkBuddyEffort, type WorkBuddyHostHeartbeat, type WorkBuddyModelBilling, type WorkBuddyModelInfo, type WorkBuddyModelReasoning, type WorkBuddyRefreshOutcome, type WorkBuddyShim, type WorkBuddyShimOptions, type WorkBuddyStatusRouteOptions, type WorkBuddyStoreOptions, WorkBuddyUpstreamClient, type WorkBuddyUpstreamModel, type WorkBuddyWebStatus, apply, applyLoomyPlugin, applyQoderPlugin, applyWorkBuddyPlugin, classifyLoomyError, classifyQoderError, classifyUpstreamError, clearHostHeartbeat, createLoomyAdapter, createLoomyShim, createQoderAdapter, createQoderShim, createWorkBuddyAdapter, createWorkBuddyShim, credentialFromUserInfo, defaultAuthDirectoryCandidates, defaultDesktopAuthCandidates, defaultDesktopAuthPath, defaultSessionCandidates, defaultSessionPath, epochMsOf, inject, isHeartbeatProcessAlive, isUsableMachineId, loadQoderWasm, loomyHostHeartbeatPath, loomyStatusHandler, loomyWebStatus, mapQoderModel, mergeRefreshOutcome, modelKeyOf, name, normalizeCredits, normalizeOrganizationTags, openServerPayload, parseLoomySession, parseQoderRefreshResponse, parseWorkBuddyAuth, prepareChatBody, prepareLoomyChatBody, prepareQoderChatBody, processStartTimeMs, qoderCredentialKey, qoderHostHeartbeatPath, qoderStatusHandler, qoderWebStatus, readHostHeartbeat, regionOf, registerLoomyStatusRoute, registerQoderStatusRoute, registerWorkBuddyStatusRoute, runtimeAuthFieldsInput, signingUserInfo, translateQoderStream, workBuddyStatusHandler, workBuddyWebStatus, workbuddyHostHeartbeatPath, workbuddyOwnAuthPath };

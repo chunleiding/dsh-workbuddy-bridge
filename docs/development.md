@@ -96,6 +96,10 @@ registerStatusRoute(ctx, path, build)
 
 **刻意没有的东西**：万能 `ProviderDriver` 大接口、SSE 翻译器钩子、FileCredentialStore 通用模型、驱动发现/注册表、统一额度模型。需要时由**第三个真实驱动**逼出来，而不是提前设计。
 
+> **第三次验证（Qoder，2026-09）**：第三个真实驱动来了，结果是**一条都没被逼出来**——Qoder 接进来同样零 `src/core/` 改动。原因值得记下来：Qoder 的上游返回的是「信封式 SSE」（真正的 OpenAI chunk 藏在 `body` 字符串里），看起来正需要当初否掉的「SSE 翻译器钩子」；但 Core 的契约是「原样转发驱动返回的 body」，所以拆信封这件事**放在驱动里做完全不别扭**，钩子纯属多余。这说明否决的理由是对的：判断标准不是「有没有平台需要它」，而是「Core 是否必须知道这件事」。唯一被 Qoder 反向确认的既有接缝是 `CredentialRefresher`——它的「驱动负责存储与刷新协议、Core 只负责节奏」正好装下 Qoder 特有的「轮换后必须写回 App 自己的文件」。
+
+> **反面清单同样重要**：三次接入都**没有**为平台加过开关式抽象。真正被回流的是两类东西：一个是**类型/展示**（Loomy 的通用状态文档 + 通用卡片），一个是**生命周期**（Qoder 用满了已有的 refresher 接缝）。两种都不是「平台专用逻辑的位置」，而是「平台间确实相同的形状」。
+
 ## 5. 新增一个平台驱动（标准流程）
 
 > 原则：**协议调研全部用 curl/脚本对真实账号验证后，再写一行驱动代码。** 猜协议是最大的返工来源。
@@ -137,7 +141,9 @@ registerStatusRoute(ctx, path, build)
 - `tests/<id>/adapter.spec.ts`：fallback 全可 resolve、能力/档位/名称装饰
 - 在 `tests/<id>/settings-integration.spec.ts` 或现有多驱动用例里断言：provider 注册、section 安装、namespace 持久化
 - **真实账号 E2E**：仿 `scripts/live-e2e-loomy.mjs` 写一个，经完整 adapter→shim→上游 链路跑通流式回复
-- `tests/client-fallback.spec.ts`：里面是根客户端 `apply()` 的**手工镜像**（浏览器包无法在 Node 测试里加载）。新增驱动时同步镜像，注释里有 drift 警告。
+- `tests/client-fallback.spec.ts`：里面是根客户端 `apply()` 的**手工镜像**（浏览器包无法在 Node 测试里加载）。新增驱动时同步镜像（Qoder 接入时已同步到三张卡），注释里有 drift 警告。
+- `tests/loomy/settings-integration.spec.ts`：它 `apply()` 的是**根插件**，断言的是全部已注册的 provider 列表。新增驱动时必须把新 provider 加进期望值，否则会红——这是有意的：漏接线就得有人看见。
+- 用假凭据的用例不要读真实 home：给 `QoderCredentialStore` 传 `authDir`（或设 `QODER_AUTH_DIR`）指向临时空目录，否则测试会去读开发者本机的登录态并发起真实网络请求。
 
 ### 5.4 抽象回流规则
 
@@ -162,6 +168,19 @@ registerStatusRoute(ctx, path, build)
 - catalog 里 2 个 `type:"image"` 是图像生成模型，必须过滤。
 - 推理模型 `max_tokens` 太小会正文 `content:null`（finish_reason=length）——fallback 目录用上游给出的大 output 上限。
 
+**Qoder（QoderWork CN，gateway/openapi.qoder.com.cn）**
+
+- **请求签名必须用官方 wasm**（无法纯 JS 复现）：URL、COSY 全套头、**加密后的 body** 都由 `QoderContext.prepareInferRequest` 生成。wasm 与未混淆的 wasm-bindgen 胶水已内嵌（`src/drivers/qoder/vendor/artifacts.ts`，由 `node scripts/vendor-qoder-wasm.mjs` 重新提取并断言 11 个必需导出）。
+- 凭据是**加密落盘的 base64 文本**，key = `machine_id.trim().slice(0,16)`（**ASCII，不是二进制**）；`machine_id` 在本版本叫 `id`，SDK 常量里写的却是 `machine_id`。
+- `encrypt_user_info` / `key` 在磁盘上**是空串**，必须每次用 `generate_runtime_auth_fields` 现场派生；漏了就是 `403 Signature invalid`，没有别的症状。
+- **同一个 context 复用会被判 `Duplicate request`**（403，与签名失效同码不同义），所以每个请求新建 context。`403` 的这两种含义要靠 body 区分。
+- 响应是**信封**：`{"headers":…,"body":"<OpenAI chunk 的 JSON 字符串>","statusCodeValue":200}`，末尾一个 `body:"[DONE]"` 的信封 + `event:finish` 计时帧。帧本身是**明文**（只有 `region/endpoints` 与 `model/list` 是加密的），所以读取一律走 `decrypt-or-passthrough`。拆信封在 driver 内完成。
+- 模型**走 `X-Model-Key` 头**，body 里的 `model` 字段只是回显、不选择任何东西。
+- 推理档位 `reasoning_effort` **接受任意字符串**（无意义取值也 200），因此没有任何拼写能被证明等于「关闭思考」——适配层只映射 catalog 明确声明的档位，`off` 恒为 `null`，不做「关闭思考」开关。
+- catalog 的 `enable:false` **不是能力上限**（`dmodel` 就是），不要据此过滤；真正要过滤的是 `source!=='system'`（BYOK 需要用户自己的 key）与非 `openai` 格式。
+- `refresh_token` **每次使用都会轮换**：刷新后必须加密写回 App 自己的文件（先 round-trip 校验 → 备份 → 写临时文件后 rename → 若期间 App 抢先刷新则放弃写入改读它的）。写错会直接把用户 App 挤下线。
+- `.auth` 与 `.auth-cn` 会同时存在且 `machine_id` **不同**，只有 `.auth-cn` 能解出凭据；候选目录必须**同时**具备 `id`/`machine_id` 与 `user` 才采纳。
+
 ## 7. 日常开发命令
 
 ```sh
@@ -172,7 +191,9 @@ pnpm build                             # tsdown 双端构建（host ESM + 浏览
 node scripts/verify-shim-hardening.mjs # loopback 六项安全加固实测（需先 build）
 node scripts/live-e2e.mjs             # WorkBuddy 真实账号链路（非测试集，消耗额度）
 node scripts/live-e2e-loomy.mjs       # Loomy 真实账号链路（非测试集）
-node lib/bin.js status                # 两驱动聚合诊断；可加 workbuddy|loomy 限定
+node scripts/live-e2e-qoder.mjs       # Qoder 完整链路（非测试集；可能触发 refresh 写回）
+node lib/bin.js status                # 三驱动聚合诊断；可加 workbuddy|loomy|qoder 限定
+node scripts/vendor-qoder-wasm.mjs    # Qoder App 升级后重新内嵌 wasm/glue
 ```
 
 注意：本机 `pnpm` 可能因 lockfile 与 manifest 版本漂移在 preflight 报错（与代码无关），此时直接用 `node_modules/.bin/` 下的二进制。

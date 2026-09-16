@@ -14,6 +14,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { registerWorkBuddyCard } from '../drivers/workbuddy/client/index.tsx'
 import { registerLoomyCard } from '../drivers/loomy/client/index.tsx'
+import { registerQoderCard } from '../drivers/qoder/client/index.tsx'
 
 /** Stable browser-plugin name. */
 export const name = 'dsh-llm-bridge-client'
@@ -22,7 +23,7 @@ export const name = 'dsh-llm-bridge-client'
 export const inject = ['slots', 'locale']
 
 /**
- * Register the WorkBuddy and Loomy cards under Plugin configuration.
+ * Register the WorkBuddy, Loomy and Qoder cards under Plugin configuration.
  *
  * The registrations mirror each driver's guarded `register*Card` (the try/
  * catch shape is duplicated in `tests/client-fallback.spec.ts`, which cannot
@@ -31,4 +32,5 @@ export const inject = ['slots', 'locale']
 export function apply(ctx: ClientContext): void {
   registerWorkBuddyCard(ctx)
   registerLoomyCard(ctx)
+  registerQoderCard(ctx)
 }
