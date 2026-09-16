@@ -10,8 +10,8 @@ import {
   workbuddyHostHeartbeatPath,
   writeHostHeartbeat,
   WORKBUDDY_HOST_HEARTBEAT_FILENAME,
-} from '../src/host-heartbeat.ts'
-import { WORKBUDDY_CONNECT_VERSION } from '../src/version.ts'
+} from '../src/drivers/workbuddy/heartbeat.ts'
+import { BRIDGE_VERSION } from '../src/core/version.ts'
 
 let root: string | undefined
 
@@ -34,10 +34,10 @@ describe('host heartbeat', () => {
     // After write: present and well-formed.
     const heartbeat = await readHostHeartbeat()
     expect(heartbeat).toBeDefined()
-    expect(heartbeat!.package).toBe('dsh-workbuddy-bridge')
+    expect(heartbeat!.package).toBe('dsh-llm-bridge')
     expect(heartbeat!.pid).toBe(process.pid)
     expect(typeof heartbeat!.registeredAt).toBe('number')
-    expect(heartbeat!.pluginVersion).toBe(WORKBUDDY_CONNECT_VERSION)
+    expect(heartbeat!.pluginVersion).toBe(BRIDGE_VERSION)
 
     // The file lives at the expected path.
     expect(workbuddyHostHeartbeatPath()).toBe(join(root, WORKBUDDY_HOST_HEARTBEAT_FILENAME))
@@ -66,7 +66,7 @@ describe('host heartbeat', () => {
     // A heartbeat registered *before* this process began (the recycled-PID case).
     const recycled = {
       version: 1 as const,
-      package: 'dsh-workbuddy-bridge' as const,
+      package: 'dsh-llm-bridge' as const,
       pluginVersion: '0.0.0-test',
       registeredAt: (startAtMs as number) - 60_000, // 1 min before this process started
       pid: process.pid,
@@ -93,7 +93,7 @@ describe('host heartbeat', () => {
     const { writeFile } = await import('node:fs/promises')
     await writeFile(
       workbuddyHostHeartbeatPath(),
-      JSON.stringify({ version: 99, package: 'dsh-workbuddy-bridge', registeredAt: Date.now(), pid: process.pid }),
+      JSON.stringify({ version: 99, package: 'dsh-llm-bridge', registeredAt: Date.now(), pid: process.pid }),
       'utf8',
     )
     expect(await readHostHeartbeat()).toBeUndefined()

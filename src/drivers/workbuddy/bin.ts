@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-/** Standalone status/diagnostics CLI for the dsh-workbuddy-bridge bundle. */
+/** Standalone status/diagnostics CLI for the WorkBuddy driver bundle. */
 
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { WorkBuddyCredentialStore, workbuddyOwnAuthPath } from './auth.ts'
 import { WorkBuddyUpstreamClient } from './upstream.ts'
 import { FALLBACK_WORKBUDDY_MODELS } from './catalog.ts'
-import { WORKBUDDY_CONNECT_VERSION } from './version.ts'
-import { isHeartbeatProcessAlive, readHostHeartbeat, workbuddyHostHeartbeatPath } from './host-heartbeat.ts'
+import { BRIDGE_VERSION } from '../../core/version.ts'
+import { isHeartbeatProcessAlive, readHostHeartbeat, workbuddyHostHeartbeatPath } from './heartbeat.ts'
 
 type Action = 'doctor' | 'logout' | 'status'
 
@@ -23,11 +23,11 @@ function safeMessage(error: unknown): string {
 
 function printHelp(): void {
   process.stdout.write([
-    'Usage: dsh-workbuddy-bridge <doctor|status|logout> [--json]',
+    'Usage: dsh-llm-bridge <doctor|status|logout> [--json]',
     '',
     '  doctor   secret-free sign-in and environment diagnostics',
     '  status   sign-in state, remaining WorkBuddy credit, and host-bundle health',
-    '  logout   remove the plugin-owned credential copy (the desktop app keeps its sign-in)',
+    '  logout   remove the driver-owned credential copy (the desktop app keeps its sign-in)',
     '  --json   emit one secret-free JSON document (doctor/status only)',
     '',
   ].join('\n'))
@@ -50,8 +50,9 @@ async function doctor(jsonOutput: boolean): Promise<number> {
   const hostAlive = heartbeat !== undefined && isHeartbeatProcessAlive(heartbeat)
   const report = {
     schemaVersion: JSON_SCHEMA_VERSION,
-    package: 'dsh-workbuddy-bridge',
-    version: WORKBUDDY_CONNECT_VERSION,
+    package: 'dsh-llm-bridge',
+    provider: 'workbuddy',
+    version: BRIDGE_VERSION,
     node: process.version,
     desktopAuthFile: {
       path: store.desktopAuthPath() ?? '(no platform default; set WORKBUDDY_AUTH_FILE)',
@@ -76,9 +77,9 @@ async function doctor(jsonOutput: boolean): Promise<number> {
     printJson(report)
   } else {
     process.stdout.write([
-      `WorkBuddy Connect ${WORKBUDDY_CONNECT_VERSION} on ${process.version}`,
+      `DSH LLM Bridge ${BRIDGE_VERSION} (workbuddy provider) on ${process.version}`,
       `Desktop auth file: ${report.desktopAuthFile.present ? 'present' : 'missing'} (${report.desktopAuthFile.path})`,
-      `Host bundle: ${hostAlive ? `running (pid ${heartbeat!.pid})` : heartbeat !== undefined ? 'stale heartbeat (process exited)' : 'not started'}`,
+      `Host bundle: ${hostAlive ? 'running (pid ' + String(heartbeat!.pid) + ')' : heartbeat !== undefined ? 'stale heartbeat (process exited)' : 'not started'}`,
       `Sign-in state: ${report.signIn}`,
       `Static fallback models: ${report.fallbackModels}`,
       ...report.hints.map(hint => `Hint: ${hint}`),
@@ -97,9 +98,9 @@ async function status(jsonOutput: boolean): Promise<number> {
   const hostState = hostAlive ? 'running' : heartbeat !== undefined ? 'stale' : 'not-started'
   if (authStatus.state !== 'signed-in') {
     if (jsonOutput) {
-      printJson({ schemaVersion: JSON_SCHEMA_VERSION, package: 'dsh-workbuddy-bridge', version: WORKBUDDY_CONNECT_VERSION, status: 'signed-out', hostBundle: hostState })
+      printJson({ schemaVersion: JSON_SCHEMA_VERSION, package: 'dsh-llm-bridge', provider: 'workbuddy', version: BRIDGE_VERSION, status: 'signed-out', hostBundle: hostState })
     } else {
-      process.stdout.write(`WorkBuddy Connect: signed out\nHost bundle: ${hostState}\n`)
+      process.stdout.write(`DSH LLM Bridge (workbuddy): signed out\nHost bundle: ${hostState}\n`)
     }
     return 1
   }
@@ -114,8 +115,9 @@ async function status(jsonOutput: boolean): Promise<number> {
   if (jsonOutput) {
     printJson({
       schemaVersion: JSON_SCHEMA_VERSION,
-      package: 'dsh-workbuddy-bridge',
-      version: WORKBUDDY_CONNECT_VERSION,
+      package: 'dsh-llm-bridge',
+      provider: 'workbuddy',
+      version: BRIDGE_VERSION,
       status: 'signed-in',
       ...expiresAt === undefined ? {} : { accessTokenExpires: expiresAt },
       ...authStatus.nickname === undefined ? {} : { nickname: authStatus.nickname },
@@ -128,12 +130,12 @@ async function status(jsonOutput: boolean): Promise<number> {
     return 0
   }
   process.stdout.write([
-    `WorkBuddy Connect: signed in${authStatus.nickname === undefined ? '' : ` as ${authStatus.nickname}`}`,
+    `DSH LLM Bridge (workbuddy): signed in${authStatus.nickname === undefined ? '' : ` as ${authStatus.nickname}`}`,
     ...expiresAt === undefined ? [] : [`Access token expires ${expiresAt} (refresh is automatic)`],
     credits?.error === undefined
       ? `Remaining credit: ${credits?.total ?? 'unknown'}`
       : `Remaining credit: unavailable (${credits.error})`,
-    `Host bundle: ${hostAlive ? `running (pid ${heartbeat!.pid})` : hostState === 'stale' ? 'stale heartbeat (DSH process exited)' : 'not started in this profile'}`,
+    `Host bundle: ${hostAlive ? 'running (pid ' + String(heartbeat!.pid) + ')' : hostState === 'stale' ? 'stale heartbeat (DSH process exited)' : 'not started in this profile'}`,
     'Client card: load failures are logged to the browser console only; the host provider is unaffected.',
     '',
   ].join('\n'))
@@ -149,14 +151,14 @@ export async function run(argv: readonly string[]): Promise<number> {
   const [rawAction, ...flags] = argv
   const actions: readonly Action[] = ['doctor', 'logout', 'status']
   if (!actions.includes(rawAction as Action)) {
-    process.stderr.write(`dsh-workbuddy-bridge: expected doctor, logout, or status; got ${JSON.stringify(rawAction)}\n`)
+    process.stderr.write(`dsh-llm-bridge: expected doctor, logout, or status; got ${JSON.stringify(rawAction)}\n`)
     return 1
   }
   const action = rawAction as Action
   const jsonOutput = flags.includes('--json')
   const unknown = flags.filter(flag => flag !== '--json')
   if (unknown.length > 0 || (jsonOutput && action === 'logout')) {
-    process.stderr.write(`dsh-workbuddy-bridge: invalid options for ${action}: ${flags.join(' ')}\n`)
+    process.stderr.write(`dsh-llm-bridge: invalid options for ${action}: ${flags.join(' ')}\n`)
     return 1
   }
   try {
@@ -168,12 +170,12 @@ export async function run(argv: readonly string[]): Promise<number> {
       case 'logout': {
         const store = makeStore()
         await store.logout()
-        process.stdout.write(`WorkBuddy Connect: removed ${workbuddyOwnAuthPath()}; the desktop app's sign-in is untouched\n`)
+        process.stdout.write(`DSH LLM Bridge: removed ${workbuddyOwnAuthPath()}; the desktop app's sign-in is untouched\n`)
         return 0
       }
     }
   } catch (error: unknown) {
-    process.stderr.write(`dsh-workbuddy-bridge: ${action} failed: ${safeMessage(error)}\n`)
+    process.stderr.write(`dsh-llm-bridge: ${action} failed: ${safeMessage(error)}\n`)
     return 1
   }
 }

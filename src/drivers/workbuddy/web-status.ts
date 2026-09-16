@@ -1,19 +1,19 @@
 /**
- * Same-origin status route for the WorkBuddy plugin card: sign-in state,
- * token expiry, and remaining credit, fetched by the browser half. The route
- * answers loopback browser requests only and never carries token material.
+ * WorkBuddy status document for the plugin card: sign-in state, token
+ * expiry, remaining credit, and the free/promo model badges. The HTTP
+ * mechanism (loopback gate, JSON, redaction, webServer mounting) is core;
+ * everything in this document is WorkBuddy account semantics.
  *
- * @module dsh-workbuddy-bridge/web-status
+ * @module dsh-llm-bridge/drivers/workbuddy/web-status
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { WorkBuddyCredentialStore } from './auth.ts'
 import type { WorkBuddyUpstreamClient } from './upstream.ts'
 import { normalizeCredits } from './upstream.ts'
 import type { WorkBuddyModelInfo } from './catalog.ts'
-import { hostIsLoopback, originIsLoopback } from './loopback.ts'
+import { createStatusHandler, registerStatusRoute, safeMessage } from '../../core/status-route.ts'
 import { WORKBUDDY_STATUS_PATH } from './status-paths.ts'
 import type { WorkBuddyWebModelBadge, WorkBuddyWebStatus } from './status-paths.ts'
 
@@ -26,30 +26,6 @@ export interface WorkBuddyStatusRouteOptions {
   client: Pick<WorkBuddyUpstreamClient, 'fetchCredits'>
   /** Resolve the current model catalog for free/badge display. */
   models: () => readonly WorkBuddyModelInfo[]
-}
-
-/** Redact token-like content before it crosses to the browser. */
-function safeMessage(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error))
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu, '[redacted token]')
-    .replace(/(\b(?:code|token|refresh_token|access_token)=)[^&\s]+/giu, '$1[redacted]')
-    .slice(0, 500)
-}
-
-function json(res: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body)
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) })
-  res.end(payload)
-}
-
-/**
- * The request must be addressed to the loopback interface, and a
- * browser-attached Origin must be loopback too. The Host check drops
- * DNS-rebinding pages (their Host is the attacker's domain, not loopback);
- * the card's same-origin fetches carry no Origin and pass on Host alone.
- */
-function loopbackRequest(req: IncomingMessage): boolean {
-  return hostIsLoopback(req.headers.host) && originIsLoopback(req.headers.origin)
 }
 
 /**
@@ -105,33 +81,10 @@ export async function workBuddyWebStatus(
 export function workBuddyStatusHandler(
   deps: WorkBuddyStatusRouteOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  return async (req, res) => {
-    if (req.method !== 'GET') {
-      json(res, 405, { error: 'method not allowed' })
-      return
-    }
-    if (!loopbackRequest(req)) {
-      json(res, 403, { error: 'request-not-trusted' })
-      return
-    }
-    try {
-      json(res, 200, await workBuddyWebStatus(deps))
-    } catch (error: unknown) {
-      json(res, 500, { error: safeMessage(error) })
-    }
-  }
+  return createStatusHandler(() => workBuddyWebStatus(deps))
 }
 
 /** Mount the GET status route on an optional webServer context. */
 export function registerWorkBuddyStatusRoute(ctx: Context, deps: WorkBuddyStatusRouteOptions): void {
-  ctx.effect(() => {
-    const dispose = ctx.webServer.register({
-      kind: 'exact',
-      path: WORKBUDDY_STATUS_PATH,
-      handler: workBuddyStatusHandler(deps),
-    })
-    return () => {
-      dispose()
-    }
-  }, 'dsh-workbuddy-bridge: Web status route')
+  registerStatusRoute(ctx, WORKBUDDY_STATUS_PATH, () => workBuddyWebStatus(deps))
 }

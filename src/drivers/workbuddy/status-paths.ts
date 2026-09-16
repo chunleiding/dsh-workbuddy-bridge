@@ -1,7 +1,8 @@
-/** Node-free constants and types shared by the Host and browser halves. */
+/** WorkBuddy card contract: Node-free constants and types shared by the
+ *  host and browser halves. */
 
 /** Plugin-owned status endpoint consumed by its browser half. */
-export const WORKBUDDY_STATUS_PATH = '/plugins/dsh-workbuddy-bridge/status'
+export const WORKBUDDY_STATUS_PATH = '/plugins/dsh-llm-bridge/status'
 
 /** One billing package and its remaining credit. */
 export interface WorkBuddyWebCreditAccount {
@@ -32,7 +33,7 @@ export interface WorkBuddyWebModelBadge {
   credits?: string
 }
 
-/** The JSON document the plugin card renders. */
+/** The JSON document the WorkBuddy plugin card renders. */
 export type WorkBuddyWebStatus =
   | { status: 'signed-out' }
   | {

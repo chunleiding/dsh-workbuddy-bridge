@@ -1,8 +1,20 @@
-# DSH WorkBuddy Connect
+# DSH LLM Bridge
 
 English | [中文](./README.md)
 
 Brings every model in the WorkBuddy desktop app (GLM-5.3, GLM-5.2, DeepSeek-V4-Pro, DeepSeek-V4-Flash, Kimi-K3, MiniMax-M3, Hy3, and more) straight into [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — zero configuration in the DSH chat.
+
+## Architecture
+
+The package reuses a closed AI agent's existing sign-in and quota. It is split into a platform-agnostic **core** (credential lifecycle, model catalog, loopback shim, pi-ai adapter shell, SSE pipe, shared secret, heartbeat, status route — no platform names) and **drivers** that own every platform-private fact (credential discovery, token refresh, endpoints, protocol conversion, models, quota, errors, branding):
+
+```
+src/core/                 platform-agnostic mechanisms
+src/drivers/workbuddy/    the WorkBuddy driver (currently the only one)
+src/drivers/trae/ …       planned driver locations (not implemented yet)
+```
+
+Adding Trae / Qoder later means adding a driver; the WorkBuddy behavior is unchanged by the split.
 
 ## Features
 
@@ -37,14 +49,14 @@ Prerequisite: the WorkBuddy desktop app is installed and signed in (the plugin r
 | **0.3.0+** | `0.1.2-rc.1` or newer | `2.0.5`+ recommended |
 | **0.2.6** | `0.1.1-rc.2` (older line) | `2.0.3` / `2.0.4` |
 
-- On DSH `0.1.2-rc.1` or newer, just install the latest: `dsh plugin --profile web add dsh-workbuddy-bridge`
+- On DSH `0.1.2-rc.1` or newer, just install the latest: `dsh plugin --profile web add dsh-llm-bridge`
 - Still on DSH `0.1.1-rc.2`? Stay on the older release: `dsh plugin --profile web add dsh-workbuddy-bridge@0.2.6`
 
 The plugin runs under all three DSH interfaces: **Web**, **Desktop**, and **TUI**. Pick the install command that matches the profile you use.
 
 ```sh
 # Web (recommended; ships prebuilt artifacts)
-dsh plugin --profile web add dsh-workbuddy-bridge
+dsh plugin --profile web add dsh-llm-bridge
 dsh web
 
 # or install the Web version from the GitHub source
@@ -54,13 +66,13 @@ dsh web
 
 ```sh
 # Desktop (the DSH Desktop app)
-dsh plugin --profile desktop add dsh-workbuddy-bridge
+dsh plugin --profile desktop add dsh-llm-bridge
 dsh --profile desktop
 ```
 
 ```sh
 # TUI (terminal UI)
-dsh plugin --profile dsh-tui add dsh-workbuddy-bridge
+dsh plugin --profile dsh-tui add dsh-llm-bridge
 dsh --profile dsh-tui
 ```
 
@@ -72,7 +84,7 @@ After installing, switch to a WorkBuddy model in the model picker of the interfa
 
 ## CLI
 
-`dsh plugin --profile <web|desktop|dsh-tui> exec dsh-workbuddy-bridge status`: sign-in state and remaining credit (`--json` for machine-readable output; `doctor` for diagnostics and `logout` for credential cleanup are also available).
+`dsh plugin --profile <web|desktop|dsh-tui> exec dsh-llm-bridge status`: sign-in state and remaining credit (`--json` for machine-readable output; `doctor` for diagnostics and `logout` for credential cleanup are also available).
 
 ## Known limitations
 

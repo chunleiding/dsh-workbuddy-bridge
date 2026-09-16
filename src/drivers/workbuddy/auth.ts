@@ -1,11 +1,17 @@
 /**
- * WorkBuddy credential resolution. The primary source is the WorkBuddy
- * desktop app's own auth file, read-only; a plugin-owned copy under
- * `$DSH_HOME` holds token refreshes so the desktop file is never written.
- * The effective credential is whichever of the two expires later, so a
- * refresh by either side wins.
+ * WorkBuddy credential discovery and storage. The primary source is the
+ * WorkBuddy desktop app's own auth file, read-only; a driver-owned copy
+ * under `$DSH_HOME` holds token refreshes so the desktop file is never
+ * written. The effective credential is whichever of the two expires later,
+ * so a refresh by either side wins.
  *
- * @module dsh-workbuddy-bridge/auth
+ * This is WorkBuddy-private knowledge: the desktop file's platform path,
+ * its on-disk JSON shapes, the env override, and the owned-copy format. The
+ * generic refresh lifecycle (expiry margin, single-flight, failed-refresh
+ * fallback) lives in the core's {@link CredentialRefresher}; storage stays
+ * entirely here — the core never assumes credentials come from files.
+ *
+ * @module dsh-llm-bridge/drivers/workbuddy/auth
  */
 
 import { readFile, rm, stat } from 'node:fs/promises'
@@ -13,6 +19,7 @@ import { homedir, release } from 'node:os'
 import { basename, join } from 'node:path'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+import { CredentialRefresher } from '../../core/credential.ts'
 import type { WorkBuddyRefreshOutcome } from './upstream.ts'
 
 /** Normalized WorkBuddy credential, timestamps in epoch milliseconds. */
@@ -43,7 +50,7 @@ export interface WorkBuddyAuthStatus {
 export interface WorkBuddyStoreOptions {
   /** Explicit desktop auth-file path, overriding env and platform defaults. */
   desktopPath?: string
-  /** Explicit plugin-owned copy path, defaulting under `$DSH_HOME`. */
+  /** Explicit driver-owned copy path, defaulting under `$DSH_HOME`. */
   ownPath?: string
   /** Performs the upstream token refresh. */
   refresh: (credential: WorkBuddyCredential) => Promise<WorkBuddyRefreshOutcome>
@@ -51,13 +58,13 @@ export interface WorkBuddyStoreOptions {
   refreshMarginMs?: number
 }
 
-/** Basename of the plugin-owned credential copy inside the Harness home. */
+/** Basename of the driver-owned credential copy inside the Harness home. */
 export const WORKBUDDY_AUTH_FILENAME = '.workbuddy-auth.json'
 
 /** Env variable that overrides the desktop auth-file location. */
 export const WORKBUDDY_AUTH_FILE_ENV = 'WORKBUDDY_AUTH_FILE'
 
-/** Current on-disk format of the plugin-owned copy; readers reject others. */
+/** Current on-disk format of the driver-owned copy; readers reject others. */
 const OWN_FORMAT_VERSION = 1
 
 interface OwnDocument {
@@ -65,7 +72,7 @@ interface OwnDocument {
   credential: WorkBuddyCredential
 }
 
-/** Plugin-owned copy path inside the Harness home. */
+/** Driver-owned copy path inside the Harness home. */
 export function workbuddyOwnAuthPath(): string {
   return join(resolveDshHome(), WORKBUDDY_AUTH_FILENAME)
 }
@@ -188,12 +195,12 @@ export function parseWorkBuddyAuth(text: string): WorkBuddyCredential | undefine
   return credential
 }
 
-/** Serialize the plugin-owned copy. */
+/** Serialize the driver-owned copy. */
 function ownDocument(credential: WorkBuddyCredential): OwnDocument {
   return { version: OWN_FORMAT_VERSION, credential }
 }
 
-/** Parse the plugin-owned copy; other versions and shapes are rejected. */
+/** Parse the driver-owned copy; other versions and shapes are rejected. */
 function parseOwnDocument(text: string): WorkBuddyCredential | undefined {
   let parsed: unknown
   try {
@@ -239,21 +246,27 @@ function isENOENT(error: unknown): boolean {
  * Read-only credential store with demand-driven refresh.
  *
  * Refresh policy: refresh only when the access token is inside the margin
- * (or already expired), keep the refreshed credential in the plugin-owned
+ * (or already expired), keep the refreshed credential in the driver-owned
  * copy, and never write the desktop app's file. A failed refresh still
  * returns a not-yet-expired token so an unreachable refresh endpoint does
  * not take down a working session.
+ *
+ * The refresh lifecycle itself is delegated to the core
+ * {@link CredentialRefresher}; this class adds WorkBuddy's two storage
+ * sources, their merge rule, and the WorkBuddy-specific error wording.
  */
 export class WorkBuddyCredentialStore {
   private readonly refresh: WorkBuddyStoreOptions['refresh']
-  private readonly refreshMarginMs: number
+  private readonly refresher: CredentialRefresher<WorkBuddyCredential>
   private readonly ownPath: string
   private desktopPathOverride: string | undefined
-  private inflight: Promise<WorkBuddyCredential> | undefined
 
   constructor(options: WorkBuddyStoreOptions) {
     this.refresh = options.refresh
-    this.refreshMarginMs = options.refreshMarginMs ?? 5 * 60 * 1000
+    this.refresher = new CredentialRefresher<WorkBuddyCredential>({
+      refresh: credential => this.refreshCredential(credential),
+      ...options.refreshMarginMs === undefined ? {} : { refreshMarginMs: options.refreshMarginMs },
+    })
     this.ownPath = options.ownPath ?? workbuddyOwnAuthPath()
     this.desktopPathOverride = options.desktopPath
   }
@@ -287,7 +300,7 @@ export class WorkBuddyCredentialStore {
     return this.resolveDesktopPath()
   }
 
-  /** The plugin-owned copy path, for diagnostics. */
+  /** The driver-owned copy path, for diagnostics. */
   ownAuthPath(): string {
     return this.ownPath
   }
@@ -314,12 +327,7 @@ export class WorkBuddyCredentialStore {
         + ` (expected ${desktop} or WORKBUDDY_AUTH_FILE), or refresh an existing session`,
       )
     }
-    if (!this.needsRefresh(credential)) return credential
-    this.inflight ??= this.refreshNow(credential)
-      .finally(() => {
-        this.inflight = undefined
-      })
-    return this.inflight
+    return this.refresher.refreshIfNeeded(credential)
   }
 
   /** Read-only sign-in summary; never refreshes and never throws. */
@@ -340,18 +348,20 @@ export class WorkBuddyCredentialStore {
     }
   }
 
-  /** Remove the plugin-owned copy; the desktop file is untouched. */
+  /** Remove the driver-owned copy; the desktop file is untouched. */
   async logout(): Promise<void> {
     await rm(this.ownPath, { force: true })
     await rm(`${this.ownPath}.lock`, { force: true })
   }
 
-  private needsRefresh(credential: WorkBuddyCredential): boolean {
-    if (credential.expiresAtMs <= 0) return true
-    return Date.now() + this.refreshMarginMs >= credential.expiresAtMs
-  }
-
-  private async refreshNow(credential: WorkBuddyCredential): Promise<WorkBuddyCredential> {
+  /**
+   * Perform the WorkBuddy refresh for one credential and persist the
+   * outcome in the owned copy. The no-refresh-token short-circuit and the
+   * error wording (including the wrapped upstream cause) are exactly what
+   * the pre-refactor store produced; the core refresher adds the
+   * still-valid fallback around this call.
+   */
+  private async refreshCredential(credential: WorkBuddyCredential): Promise<WorkBuddyCredential> {
     if (credential.refreshToken === '') {
       if (credential.expiresAtMs > Date.now() + 30_000) return credential
       throw new Error('workbuddy: access token expired and no refresh token is stored; sign in again in the WorkBuddy desktop app')
@@ -371,7 +381,6 @@ export class WorkBuddyCredentialStore {
       await this.saveOwn(refreshed)
       return refreshed
     } catch (error: unknown) {
-      if (credential.expiresAtMs > Date.now() + 30_000) return credential
       throw new Error(
         `workbuddy: token refresh failed and the access token is expired (${String(error)});`
         + ' open the WorkBuddy desktop app once to sign in again',

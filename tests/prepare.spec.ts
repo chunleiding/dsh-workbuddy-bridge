@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyUpstreamError, prepareChatBody, regionOf } from '../src/upstream.ts'
+import { classifyUpstreamError, prepareChatBody, regionOf } from '../src/drivers/workbuddy/upstream.ts'
 
 describe('prepareChatBody', () => {
   it('forces stream true', () => {

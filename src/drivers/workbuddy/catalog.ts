@@ -2,9 +2,13 @@
  * WorkBuddy model catalog: a static fallback list captured from the live
  * endpoint, replaced by the upstream's dynamic answer once it loads.
  *
- * @module dsh-workbuddy-bridge/catalog
+ * The roster and every field on it are WorkBuddy-private facts; only the
+ * mutable container comes from the core.
+ *
+ * @module dsh-llm-bridge/drivers/workbuddy/catalog
  */
 
+import { Catalog } from '../../core/catalog.ts'
 import type { WorkBuddyUpstreamModel } from './upstream.ts'
 
 /** One model entry the adapter exposes. */
@@ -45,17 +49,12 @@ export const FALLBACK_WORKBUDDY_MODELS: readonly WorkBuddyModelInfo[] = [
   { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', contextWindow: 1_000_000, maxTokens: 32_000, supportsImages: true, reasoning: { supports: true, onlyReasoning: true, supportedEfforts: ['low', 'high', 'max'], defaultEffort: 'high', canDisableThinking: true }, billing: { credits: 'x0.06', free: false } },
 ]
 
-/** Mutable catalog shared by the shim's `/v1/models` and the adapter. */
-export class WorkBuddyCatalog {
-  private models: readonly WorkBuddyModelInfo[] = FALLBACK_WORKBUDDY_MODELS
-
-  /** Current entries; the fallback list until the upstream answer lands. */
-  current(): readonly WorkBuddyModelInfo[] {
-    return this.models
-  }
-
-  /** Replace the list; callers invalidate their adapter snapshot after this. */
-  set(models: readonly WorkBuddyModelInfo[]): void {
-    this.models = [...models]
+/**
+ * Mutable WorkBuddy catalog seeded with the fallback roster; shared by the
+ * shim's `/v1/models` and the adapter.
+ */
+export class WorkBuddyCatalog extends Catalog<WorkBuddyModelInfo> {
+  constructor() {
+    super(FALLBACK_WORKBUDDY_MODELS)
   }
 }

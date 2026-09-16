@@ -8,10 +8,10 @@ import { describe, expect, it, vi } from 'vitest'
  *
  * We cannot import the real client entry (it pulls browser-only DSH client
  * packages); instead we replicate the exact try/catch shape from
- * `src/client/index.tsx` and assert it swallows a simulated throw.
+ * `src/drivers/workbuddy/client/index.tsx` and assert it swallows a simulated throw.
  *
  * DRIFT WARNING: the `apply()` below is a manual mirror of the real
- * `apply()` in `src/client/index.tsx` (see the NOTE on that function). It is
+ * `apply()` in `src/drivers/workbuddy/client/index.tsx` (see the NOTE on that function). It is
  * NOT the product code, so this test only proves the fallback idea works — it
  * cannot detect a regression in the real entry. If you change the real
  * `apply()`'s guarded body or its `console.error` message, update the mirror
@@ -33,18 +33,18 @@ describe('client card fallback', () => {
       },
     }
 
-    // Mirror of src/client/index.tsx apply() body.
+    // Mirror of src/drivers/workbuddy/client/index.tsx apply() body.
     function apply(ctx: any): void {
       try {
         const namespace = 'settings.workbuddy'
-        ctx.effect(() => ctx.locale.register(namespace, { zh: {}, en: {} }), 'dsh-workbuddy-bridge: settings copy')
+        ctx.effect(() => ctx.locale.register(namespace, { zh: {}, en: {} }), 'dsh-llm-bridge: settings copy')
         const t = ctx.locale.bind(namespace)
         ctx.slots.inject('settings.plugin.item', () => {
           throw new Error('not reached')
         })
         void t
       } catch (error: unknown) {
-        console.error('[dsh-workbuddy-bridge] client card failed to load (host provider unaffected):', error)
+        console.error('[dsh-llm-bridge] client card failed to load (host provider unaffected):', error)
       }
     }
 

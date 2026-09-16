@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { WorkBuddyCredential } from '../src/auth.ts'
-import { normalizeCredits, WorkBuddyUpstreamClient } from '../src/upstream.ts'
+import type { WorkBuddyCredential } from '../src/drivers/workbuddy/auth.ts'
+import { normalizeCredits, WorkBuddyUpstreamClient } from '../src/drivers/workbuddy/upstream.ts'
 
 /**
  * Offline unit tests for WorkBuddyUpstreamClient, mocking the global `fetch`

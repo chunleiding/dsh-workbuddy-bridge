@@ -3,10 +3,10 @@ import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { WorkBuddyCredentialStore } from '../src/auth.ts'
-import { WorkBuddyCatalog } from '../src/catalog.ts'
-import { createWorkBuddyShim, type WorkBuddyShim } from '../src/shim.ts'
-import type { WorkBuddyChatResult } from '../src/upstream.ts'
+import { WorkBuddyCredentialStore } from '../src/drivers/workbuddy/auth.ts'
+import { WorkBuddyCatalog } from '../src/drivers/workbuddy/catalog.ts'
+import { createWorkBuddyShim, type WorkBuddyShim } from '../src/drivers/workbuddy/shim.ts'
+import type { WorkBuddyChatResult } from '../src/drivers/workbuddy/upstream.ts'
 
 const CLEANUP: (() => Promise<void>)[] = []
 

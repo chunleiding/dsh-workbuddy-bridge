@@ -4,22 +4,26 @@
  * ported from Sliverkiss/workbuddy2api (MIT), whose Go implementation is
  * battle-tested against the real endpoint.
  *
- * @module dsh-workbuddy-bridge/upstream
+ * Everything in this file is WorkBuddy-private: endpoints, CN/Global
+ * regions, CLI-shaped headers, the `{code,msg,data}` envelope, the billing
+ * protocol, request-body quirks, and the Chinese/English error markers. The
+ * core never imports from here.
+ *
+ * @module dsh-llm-bridge/drivers/workbuddy/upstream
  */
 
 import type { WorkBuddyCredential } from './auth.ts'
+import type { BridgeChatResult, BridgeErrorKind } from '../../core/types.ts'
 
 /** WorkBuddy region selected by the credential's login domain. */
 export type WorkBuddyRegion = 'cn' | 'global'
 
-/** Upstream failure classes the shim maps onto distinct HTTP answers. */
-export type UpstreamErrorKind =
-  | 'hard_credit'
-  | 'soft_rate'
-  | 'session_dead'
-  | 'not_found'
-  | 'server'
-  | 'client'
+/**
+ * Upstream failure classes the shim maps onto distinct HTTP answers. This
+ * is the core error taxonomy; WorkBuddy just classifies its responses into
+ * it.
+ */
+export type UpstreamErrorKind = BridgeErrorKind
 
 /** One CLI-usable model as the upstream catalog describes it. */
 export interface WorkBuddyUpstreamModel {
@@ -103,9 +107,7 @@ export interface WorkBuddyRefreshOutcome {
 }
 
 /** Chat answer: either a live SSE response or a classified failure. */
-export type WorkBuddyChatResult =
-  | { ok: true; response: Response }
-  | { ok: false; status: number; kind: UpstreamErrorKind; message: string }
+export type WorkBuddyChatResult = BridgeChatResult
 
 const CN_CHAT_BASE = 'https://copilot.tencent.com'
 const CN_BILLING_BASE = 'https://www.codebuddy.cn'

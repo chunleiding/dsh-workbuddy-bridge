@@ -8,7 +8,7 @@ import {
   WorkBuddyCredentialStore,
   WORKBUDDY_AUTH_FILE_ENV,
   type WorkBuddyCredential,
-} from '../src/auth.ts'
+} from '../src/drivers/workbuddy/auth.ts'
 
 // node:os's ESM namespace rejects vi.spyOn (non-configurable), so homedir is
 // mocked at the module level; unset state falls through to the real one.

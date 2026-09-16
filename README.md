@@ -1,10 +1,22 @@
-# DSH WorkBuddy Connect
+# DSH LLM Bridge
 
 
 [English](./README.en.md) | 中文
 
 
 将 WorkBuddy 桌面 App 中包含的各种模型（GLM-5.3、GLM-5.2、DeepSeek-V4-Pro、DeepSeek-V4-Flash、Kimi-K3、MiniMax-M3 、Hy3等）自动接入 DeepSeek Harness，实现在 DSH 对话窗口里零配置使用。
+
+## 架构
+
+项目目标是复用闭源 AI Agent 已有的登录态与额度。代码分为与平台无关的 **Core**（凭证生命周期、模型目录、loopback shim、pi-ai 适配器壳、SSE 管道、共享密钥、心跳、状态路由——不包含任何平台名称）与承载全部平台私有事实（凭证发现、token 刷新、端点、协议转换、模型、额度、错误、品牌）的 **Driver**：
+
+```
+src/core/                 平台无关机制
+src/drivers/workbuddy/    WorkBuddy 驱动（当前唯一驱动）
+src/drivers/trae/ …       后续驱动的预留位置（尚未实现）
+```
+
+未来接入 Trae / Qoder 只需新增驱动；本次拆分不改变 WorkBuddy 的任何现有行为。
 
 
 ## 功能
@@ -47,14 +59,14 @@
 | **0.3.0+** | `0.1.2-rc.1` 及以上 | 建议 `2.0.5`+ |
 | **0.2.6** | `0.1.1-rc.2`（旧线） | `2.0.3` / `2.0.4` |
 
-- DSH `0.1.2-rc.1` 及以上的用户，正常安装最新版即可：`dsh plugin --profile web add dsh-workbuddy-bridge`
+- DSH `0.1.2-rc.1` 及以上的用户，正常安装最新版即可：`dsh plugin --profile web add dsh-llm-bridge`
 - 还在用 DSH `0.1.1-rc.2` 的用户，请安装旧版本并停留在 `0.2.6`：`dsh plugin --profile web add dsh-workbuddy-bridge@0.2.6`
 
 插件在三种 DSH 界面下均可运行：**Web**、**Desktop**、**TUI**。根据你使用的 profile 选对应命令安装。
 
 ```sh
 # Web（推荐，自带预构建产物）
-dsh plugin --profile web add dsh-workbuddy-bridge
+dsh plugin --profile web add dsh-llm-bridge
 dsh web
 
 # 或从 GitHub 源码安装 Web 版
@@ -64,13 +76,13 @@ dsh web
 
 ```sh
 # Desktop（DSH Desktop 桌面版）
-dsh plugin --profile desktop add dsh-workbuddy-bridge
+dsh plugin --profile desktop add dsh-llm-bridge
 dsh --profile desktop
 ```
 
 ```sh
 # TUI（终端界面）
-dsh plugin --profile dsh-tui add dsh-workbuddy-bridge
+dsh plugin --profile dsh-tui add dsh-llm-bridge
 dsh --profile dsh-tui
 ```
 
@@ -82,7 +94,7 @@ dsh --profile dsh-tui
 
 ## 命令行
 
-`dsh plugin --profile <web|desktop|dsh-tui> exec dsh-workbuddy-bridge status`：登录状态与剩余积分（`--json` 输出机器可读格式；另有 `doctor` 诊断、`logout` 清理凭据）。
+`dsh plugin --profile <web|desktop|dsh-tui> exec dsh-llm-bridge status`：登录状态与剩余积分（`--json` 输出机器可读格式；另有 `doctor` 诊断、`logout` 清理凭据）。
 
 ## 已知限制
 

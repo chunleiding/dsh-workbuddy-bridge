@@ -1,9 +1,11 @@
 /**
- * Shared loopback gates for the plugin's local HTTP surfaces: the loopback
- * shim and the same-origin web-status route. Both are only ever meant to be
+ * Shared loopback gates for the bridge's local HTTP surfaces: the loopback
+ * shim and the same-origin status route. Both are only ever meant to be
  * addressed through the machine's loopback interface.
  *
- * @module dsh-workbuddy-bridge/loopback
+ * Platform-agnostic mechanism: no driver knowledge of any kind.
+ *
+ * @module dsh-llm-bridge/core/loopback
  */
 
 /** Loopback hostnames a local plugin surface may be addressed by. */

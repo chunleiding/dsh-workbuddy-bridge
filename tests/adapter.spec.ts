@@ -2,10 +2,10 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createWorkBuddyAdapter, WORKBUDDY_PROVIDER } from '../src/adapter.ts'
-import { WorkBuddyCredentialStore } from '../src/auth.ts'
-import { FALLBACK_WORKBUDDY_MODELS, WorkBuddyCatalog } from '../src/catalog.ts'
-import type { WorkBuddyShim } from '../src/shim.ts'
+import { createWorkBuddyAdapter, WORKBUDDY_PROVIDER } from '../src/drivers/workbuddy/adapter.ts'
+import { WorkBuddyCredentialStore } from '../src/drivers/workbuddy/auth.ts'
+import { FALLBACK_WORKBUDDY_MODELS, WorkBuddyCatalog } from '../src/drivers/workbuddy/catalog.ts'
+import type { WorkBuddyShim } from '../src/drivers/workbuddy/shim.ts'
 
 /**
  * Regression cover for the profile contract `dsh-llm-pi-ai` enforces.

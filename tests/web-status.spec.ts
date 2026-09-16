@@ -3,10 +3,10 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { WorkBuddyCredentialStore } from '../src/auth.ts'
-import { workBuddyStatusHandler } from '../src/web-status.ts'
-import { WORKBUDDY_STATUS_PATH } from '../src/status-paths.ts'
-import type { WorkBuddyStatusRouteOptions } from '../src/web-status.ts'
+import { WorkBuddyCredentialStore } from '../src/drivers/workbuddy/auth.ts'
+import { workBuddyStatusHandler } from '../src/drivers/workbuddy/web-status.ts'
+import { WORKBUDDY_STATUS_PATH } from '../src/drivers/workbuddy/status-paths.ts'
+import type { WorkBuddyStatusRouteOptions } from '../src/drivers/workbuddy/web-status.ts'
 
 const CLEANUP: (() => Promise<void>)[] = []
 

@@ -8,7 +8,7 @@ const PACKAGE_VERSION = JSON.parse(
 
 export default defineConfig({
   define: {
-    __DSH_WORKBUDDY_VERSION__: JSON.stringify(PACKAGE_VERSION),
+    __DSH_LLM_BRIDGE_VERSION__: JSON.stringify(PACKAGE_VERSION),
   },
   test: {
     include: ['tests/**/*.spec.ts'],

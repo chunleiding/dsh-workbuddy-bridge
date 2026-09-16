@@ -1,27 +1,33 @@
 /**
- * Loopback OpenAI-compatible endpoint. The pi-ai provider points here; the
- * shim applies the WorkBuddy wire quirks (forced streaming, string
- * `tool_choice`, CLI-shaped headers) and forwards to the real upstream.
+ * The bridge's loopback OpenAI-compatible endpoint, generic over a
+ * platform driver. The DSH-side pi-ai provider points here; the shim
+ * authenticates inbound requests with a per-process shared secret, resolves
+ * the real platform credential through the driver, forwards the raw OpenAI
+ * request to the driver's upstream, and pipes the answer back.
+ *
+ * Protocol ownership: the shim speaks OpenAI on its DSH-facing side only.
+ * It never inspects or reshapes the platform's wire dialect — outbound
+ * conversion lives in the driver's {@link BridgeUpstream.chat}, and the
+ * response body is piped verbatim. A driver whose platform already speaks
+ * OpenAI SSE therefore needs no stream translation at all.
+ *
  * It binds 127.0.0.1 only and never serves another interface.
  *
  * Inbound hardening: the loopback bind alone is not a trust boundary (any
  * local process or a DNS-rebinding page can reach 127.0.0.1), so every
  * request must carry a loopback Host header, browser-sent Origins must be
  * loopback, chat POSTs must be application/json, and the Authorization
- * header must carry the shim's per-process shared secret. The plugin's
- * own client satisfies all four by construction; local attackers cannot
- * read the secret out of the plugin process's memory.
+ * header must carry the shim's per-process shared secret.
  *
- * @module dsh-workbuddy-bridge/shim
+ * @module dsh-llm-bridge/core/shim
  */
 
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
-import type { WorkBuddyCredentialStore } from './auth.ts'
-import type { WorkBuddyCatalog } from './catalog.ts'
+import type { Catalog } from './catalog.ts'
 import { hostIsLoopback, originIsLoopback } from './loopback.ts'
-import { prepareChatBody, WorkBuddyUpstreamClient, type UpstreamErrorKind } from './upstream.ts'
+import type { BridgeErrorKind, BridgeUpstream, IdentifiedModel } from './types.ts'
 
 /** Minimal logger surface the plugin context already provides. */
 export interface ShimLogger {
@@ -30,7 +36,7 @@ export interface ShimLogger {
 }
 
 /** What the plugin needs from a running shim. */
-export interface WorkBuddyShim {
+export interface BridgeShim {
   /** Resolves once the listener is up; rejects if listening failed. */
   ready: Promise<void>
   /** The shim origin, e.g. `http://127.0.0.1:39271`; valid after ready. */
@@ -39,7 +45,7 @@ export interface WorkBuddyShim {
    * The per-process shared secret the plugin's own client must carry as
    * `Authorization: Bearer <token>`. Lives only in memory; the adapter
    * resolves this instead of the upstream access token, because the shim
-   * resolves the real credential itself via the store.
+   * resolves the real credential itself through the driver.
    */
   token(): string
   /** Stop serving and destroy open connections. */
@@ -47,10 +53,17 @@ export interface WorkBuddyShim {
 }
 
 /** Constructor dependencies. */
-export interface WorkBuddyShimOptions {
-  store: WorkBuddyCredentialStore
-  client: Pick<WorkBuddyUpstreamClient, 'chatStream'>
-  catalog: WorkBuddyCatalog
+export interface BridgeShimOptions<C, M extends IdentifiedModel> {
+  /** Resolve the platform credential to put on the upstream request. */
+  resolveCredential: () => Promise<C>
+  /** The driver-owned upstream call; outbound protocol conversion happens here. */
+  upstream: BridgeUpstream<C>
+  /** Model list served on `/v1/models`. */
+  catalog: Catalog<M>
+  /** `owned_by` value in the `/v1/models` answer (the provider route id). */
+  ownedBy: string
+  /** Driver-supplied prefix for upstream-failure error bodies. */
+  upstreamLabel: string
   logger?: ShimLogger
 }
 
@@ -63,7 +76,7 @@ function isJsonContentType(req: IncomingMessage): boolean {
 }
 
 /** HTTP status each upstream failure class surfaces as. */
-const KIND_STATUS: Readonly<Record<UpstreamErrorKind, number>> = {
+const KIND_STATUS: Readonly<Record<BridgeErrorKind, number>> = {
   hard_credit: 402,
   soft_rate: 429,
   session_dead: 401,
@@ -102,17 +115,18 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 }
 
 /**
- * Start the loopback endpoint. Requests carry any bearer; the loopback bind
- * is the boundary, and the upstream credential comes from the store alone.
+ * Start the loopback endpoint. The platform credential comes from the
+ * driver-supplied resolver alone and never from the inbound request.
  */
-export function createWorkBuddyShim(options: WorkBuddyShimOptions): WorkBuddyShim {
-  const { store, client, catalog } = options
+export function createShim<C, M extends IdentifiedModel>(options: BridgeShimOptions<C, M>): BridgeShim {
+  const { resolveCredential, upstream, catalog, ownedBy, upstreamLabel } = options
   const logger = options.logger
 
   // Per-process shared secret. Lives only in memory; the adapter resolves it
   // as the OpenAI apiKey, which pi-ai sends as `Authorization: Bearer ...`.
-  // The shim never forwards it upstream — the real credential comes from the
-  // store. A local attacker who can hit the port still cannot forge this.
+  // The shim never forwards it upstream — the real credential comes from
+  // the driver resolver. A local attacker who can hit the port still cannot
+  // forge this.
   const SHARED_SECRET = randomBytes(32).toString('base64url')
 
   /** Constant-time bearer check; absent or mismatched bearers are rejected. */
@@ -143,7 +157,7 @@ export function createWorkBuddyShim(options: WorkBuddyShimOptions): WorkBuddyShi
   const baseUrl = (): string => {
     const address = server.address()
     if (address === null || typeof address === 'string') {
-      throw new Error('workbuddy shim has no listening address')
+      throw new Error('bridge shim has no listening address')
     }
     return `http://127.0.0.1:${address.port}`
   }
@@ -178,7 +192,7 @@ export function createWorkBuddyShim(options: WorkBuddyShimOptions): WorkBuddyShi
             id: model.id,
             object: 'model',
             created: 0,
-            owned_by: 'workbuddy',
+            owned_by: ownedBy,
           })),
         })
         return
@@ -202,27 +216,27 @@ export function createWorkBuddyShim(options: WorkBuddyShimOptions): WorkBuddyShi
       writeOpenAIError(res, 415, 'unsupported_media_type', 'Content-Type must be application/json')
       return
     }
-    let credential
+    let credential: C
     try {
-      credential = await store.resolve()
+      credential = await resolveCredential()
     } catch (error: unknown) {
       writeOpenAIError(res, 401, 'not_signed_in', String(error))
       return
     }
 
     const raw = (await readBody(req)).toString('utf8')
-    const prepared = prepareChatBody(raw)
 
     const controller = new AbortController()
     req.on('close', () => controller.abort())
-    const result = await client.chatStream(credential, prepared, controller.signal)
+    // The driver applies its platform's outbound request conversion here.
+    const result = await upstream.chat(credential, raw, controller.signal)
 
     if (!result.ok) {
       writeOpenAIError(
         res,
         KIND_STATUS[result.kind],
         result.kind,
-        `workbuddy upstream ${result.kind} (http ${result.status}): ${result.message.slice(0, 400)}`,
+        `${upstreamLabel} ${result.kind} (http ${result.status}): ${result.message.slice(0, 400)}`,
       )
       return
     }
@@ -239,7 +253,7 @@ export function createWorkBuddyShim(options: WorkBuddyShimOptions): WorkBuddyShi
       if (chunk.includes('[DONE]')) sawDone = true
     })
     body.on('error', (error: unknown) => {
-      logger?.warn('dsh-workbuddy-bridge: upstream stream failed mid-flight', error)
+      logger?.warn('dsh-llm-bridge: upstream stream failed mid-flight', error)
       if (!sawDone && res.writable) res.end('data: [DONE]\n\n')
     })
     body.pipe(res)

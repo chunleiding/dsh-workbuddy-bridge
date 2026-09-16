@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hostIsLoopback, hostnameOfHost, originIsLoopback } from '../src/loopback.ts'
+import { hostIsLoopback, hostnameOfHost, originIsLoopback } from '../src/core/loopback.ts'
 
 describe('hostnameOfHost', () => {
   it('strips the port from an IPv4 host', () => {

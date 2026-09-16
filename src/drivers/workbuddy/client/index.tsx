@@ -18,7 +18,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 /** Stable browser-plugin name. */
-export const name = 'dsh-workbuddy-bridge-client'
+export const name = 'dsh-llm-bridge-client'
 /**
  * Client services required by the Plugin configuration contribution.
  *
@@ -40,7 +40,7 @@ export const inject = ['slots', 'locale']
  * example the rc.6→rc.7 `id`→`key` / `order`→`priority` rename) degrades
  * to a `console.error` instead of throwing into the DSH loader and raising
  * the red "Failed to load plugins" banner. The host provider keeps working:
- * the `workbuddy` model channel is unaffected, and `dsh-workbuddy-bridge
+ * the `workbuddy` model channel is unaffected, and `dsh-llm-bridge
  * status` reports host health via the heartbeat file.
  *
  * NOTE: the try/catch boundary of this function is mirrored (duplicated) in
@@ -54,7 +54,7 @@ export const inject = ['slots', 'locale']
 export function apply(ctx: ClientContext): void {
   try {
     const namespace = 'settings.workbuddy'
-    ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-workbuddy-bridge: settings copy')
+    ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-llm-bridge: settings copy')
     const t = ctx.locale.bind(namespace) as WorkBuddyPluginCardInjected['t']
     ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
       name: 'settings.plugin.item',
@@ -65,6 +65,6 @@ export function apply(ctx: ClientContext): void {
   } catch (error: unknown) {
     // Degrade silently on the page: the host provider still serves models.
     // Developers see the full cause in the browser console; users see no banner.
-    console.error('[dsh-workbuddy-bridge] client card failed to load (host provider unaffected):', error)
+    console.error('[dsh-llm-bridge] client card failed to load (host provider unaffected):', error)
   }
 }
