@@ -1,14 +1,14 @@
-/** Plugin-card copy registered under the settings.workbuddy locale namespace. */
+/** Plugin-card copy registered under the settings.loomy locale namespace. */
 
 export const en = {
-  title: 'DSH WorkBuddy Connect',
-  intro: 'Use the models in the WorkBuddy desktop app directly in DSH — zero configuration, ready out of the box.',
+  title: 'DSH Loomy Connect',
+  intro: 'Use the models in the Loomy desktop app directly in DSH — zero configuration, ready out of the box.',
   expand: 'Expand',
   collapse: 'Collapse',
-  loading: 'Loading account…',
+  loading: 'Loading session…',
   signedOut: 'Not signed in',
-  signedOutHint: 'Sign in once in the WorkBuddy desktop app; this plugin follows that sign-in automatically.',
-  signedInAs: 'Signed in as {nickname}',
+  signedOutHint: 'Sign in once in the Loomy desktop app; this plugin follows that sign-in automatically.',
+  signedInAs: 'Signed in{nickname}',
   accessTokenExpires: 'Access token expires {time} (refresh is automatic)',
   sessionUpdatedAt: 'Session last updated {time}',
   creditsHeading: 'Remaining credit',
@@ -28,32 +28,32 @@ export const en = {
   rate: '{rate} credits per message',
 } as const
 
-export type WorkBuddySettingsKey = keyof typeof en
+export type LoomySettingsKey = keyof typeof en
 
-export const zh: Record<WorkBuddySettingsKey, string> = {
-  title: 'DSH WorkBuddy Connect',
-  intro: '在 DSH 中直接使用 WorkBuddy 桌面 App 包含的模型，开箱即用，无需额外配置。',
+export const zh: Record<LoomySettingsKey, string> = {
+  title: 'DSH Loomy Connect',
+  intro: '在 DSH 中直接使用 Loomy 桌面 App 包含的模型，开箱即用，无需额外配置。',
   expand: '展开',
   collapse: '收起',
-  loading: '正在读取账号…',
+  loading: '正在读取会话…',
   signedOut: '未登录',
-  signedOutHint: '在 WorkBuddy 桌面 App 里登录一次即可，插件会自动跟随当前登录的账号。',
-  signedInAs: '已登录：{nickname}',
-  accessTokenExpires: '访问令牌 {time} 过期（自动续期）',
+  signedOutHint: '在 Loomy 桌面 App 里登录一次即可，插件会自动跟随当前登录的账号。',
+  signedInAs: '已登录{nickname}',
+  accessTokenExpires: '访问令牌将于 {time} 过期（自动刷新）',
   sessionUpdatedAt: '会话最近更新时间：{time}',
   creditsHeading: '剩余积分',
   creditsTotal: '合计：{total}',
   percentRemaining: '剩余 {percent}%',
   exactRemaining: '剩余 {remain} / {size}',
   creditPackageUnknownSize: '剩余 {remain}',
-  creditsError: '积分查询失败：{message}',
+  creditsError: '积分不可用：{message}',
   refresh: '刷新',
-  refreshing: '正在刷新…',
+  refreshing: '刷新中…',
   requestFailed: '请求失败',
   accountHeading: '账号',
-  modelsHeading: '模型优惠',
+  modelsHeading: '优惠模型',
   freeModel: '免费',
   badgeLimitedFree: '限时免费',
   badgeNightDiscount: '夜间折扣',
-  rate: '{rate} 积分/次',
+  rate: '{rate} 积分/条消息',
 }

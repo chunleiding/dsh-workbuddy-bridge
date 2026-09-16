@@ -17,18 +17,35 @@ import { AttachmentStore } from "@deepseek-ai/dsh-attachment";
  */
 declare const WORKBUDDY_SETTINGS_NS: SettingsNamespace;
 /** WorkBuddy driver configuration. */
-interface Config {
+interface Config$2 {
   /** Explicit WorkBuddy desktop auth-file path, overriding env and platform defaults. */
   authFile?: string;
 }
-declare const Config: z<Config>;
+declare const Config$2: z<Config$2>;
 /**
  * Start the loopback endpoint, register the `workbuddy` provider, and
  * refresh the model catalog from the upstream once credentials allow it.
  * The static fallback catalog serves from the first moment, so an offline
  * upstream never leaves the provider empty.
  */
-declare function applyWorkBuddyPlugin(ctx: Context, config: Config): void;
+declare function applyWorkBuddyPlugin(ctx: Context, config: Config$2): void;
+//#endregion
+//#region src/drivers/loomy/plugin.d.ts
+/** Settings namespace owning the Loomy configuration card. */
+declare const LOOMY_SETTINGS_NS: SettingsNamespace;
+/** Loomy driver configuration. */
+interface Config$1 {
+  /** Explicit Loomy session-file path, overriding env and platform defaults. */
+  sessionFile?: string;
+}
+declare const Config$1: z<Config$1>;
+/**
+ * Start the loopback endpoint, register the `loomy` provider, and refresh
+ * the model catalog from imodel once a session is available. The static
+ * fallback catalog serves from the first moment, so an offline upstream
+ * never leaves the provider empty.
+ */
+declare function applyLoomyPlugin(ctx: Context, config: Config$1): void;
 //#endregion
 //#region src/core/catalog.d.ts
 /**
@@ -537,11 +554,65 @@ declare const clearHostHeartbeat: () => Promise<void>;
 /** Read and validate the heartbeat; `undefined` when absent or malformed. */
 declare const readHostHeartbeat: () => Promise<HostHeartbeat | undefined>;
 //#endregion
+//#region src/core/status-types.d.ts
+/**
+ * Generic, node-free status contract shared by every driver's host status
+ * route and its browser card.
+ *
+ * The shape is deliberately the common subset of "signed in / signed out,
+ * optional quota, optional promo-model badges" — drivers omit whatever their
+ * platform does not expose (for example a platform with no balance endpoint
+ * simply never sets `credits`). A driver with genuinely different
+ * information renders it through its own card instead of stretching this
+ * type.
+ *
+ * @module dsh-llm-bridge/core/status-types
+ */
+/** One quota package and its remaining amount. */
+interface DriverWebCreditAccount {
+  packageName: string;
+  remain: number;
+  size: number;
+}
+/** Aggregated quota answer rendered by the plugin card. */
+interface DriverWebCredits {
+  total: number;
+  accounts: readonly DriverWebCreditAccount[];
+}
+/** Billing/offer facts for one model, rendered as card badges. */
+interface DriverWebModelBadge {
+  id: string;
+  name: string;
+  /** Whether the model is currently free. */
+  free?: boolean;
+  /** Promotional badges in the platform's own spelling. */
+  badges?: readonly string[];
+  /** Rate/multiplier in a language-neutral display form, e.g. `x0.79`. */
+  credits?: string;
+}
+/** The JSON document any driver status card renders. */
+type DriverWebStatus = {
+  status: 'signed-out';
+} | {
+  status: 'signed-in';
+  /** Optional account label (never carry secrets or raw PII like phone numbers). */
+  nickname?: string;
+  /** Access-credential expiry, epoch milliseconds. */
+  expiresAt?: number;
+  /** Session-state refresh time, epoch milliseconds (platforms without expiring tokens). */
+  updatedAt?: number;
+  credits?: DriverWebCredits;
+  creditsError?: string;
+  /** Offer facts for the models the driver serves. */
+  models?: readonly DriverWebModelBadge[];
+} | {
+  status: 'error';
+  message: string;
+};
+//#endregion
 //#region src/drivers/workbuddy/status-paths.d.ts
-/** WorkBuddy card contract: Node-free constants and types shared by the
- *  host and browser halves. */
-/** Plugin-owned status endpoint consumed by its browser half. */
-declare const WORKBUDDY_STATUS_PATH = "/plugins/dsh-llm-bridge/status";
+/** Plugin-owned status endpoint consumed by the WorkBuddy browser half. */
+declare const WORKBUDDY_STATUS_PATH = "/plugins/dsh-llm-bridge/workbuddy/status";
 /** One billing package and its remaining credit. */
 interface WorkBuddyWebCreditAccount {
   packageName: string;
@@ -561,11 +632,7 @@ interface WorkBuddyWebModelBadge {
   free?: boolean;
   /** Promotional badges, e.g. `限时免费`, `夜间折扣`. */
   badges?: readonly string[];
-  /**
-   * Credits multiplier in display form, e.g. `x0.79`. Unlike the model
-   * picker's copy, the card renders through the browser locale, so this value
-   * may be interpolated into a localized sentence rather than shown bare.
-   */
+  /** Credits multiplier in display form, e.g. `x0.79`. */
   credits?: string;
 }
 /** The JSON document the WorkBuddy plugin card renders. */
@@ -579,7 +646,6 @@ type WorkBuddyWebStatus = {
   expiresAt?: number;
   credits?: WorkBuddyWebCredits;
   creditsError?: string;
-  /** Billing convenience facts for the models the plugin serves. */
   models?: readonly WorkBuddyWebModelBadge[];
 } | {
   status: 'error';
@@ -605,16 +671,216 @@ declare function workBuddyStatusHandler(deps: WorkBuddyStatusRouteOptions): (req
 /** Mount the GET status route on an optional webServer context. */
 declare function registerWorkBuddyStatusRoute(ctx: Context, deps: WorkBuddyStatusRouteOptions): void;
 //#endregion
+//#region src/drivers/loomy/meta.d.ts
+/**
+ * Loomy provider metadata shared across the driver's adapter, shim,
+ * upstream, and DSH plugin registration.
+ *
+ * @module dsh-llm-bridge/drivers/loomy/meta
+ */
+/** Provider route this driver owns. */
+declare const LOOMY_PROVIDER = "loomy";
+/** Human-facing provider name in the DSH model pickers. */
+declare const LOOMY_DISPLAY_NAME = "Loomy";
+/** Provider idle ceiling while one stream read is outstanding. */
+declare const LOOMY_STREAM_IDLE_TIMEOUT_MS = 300000;
+/** Basename of the Loomy desktop app's session file. */
+declare const LOOMY_SESSION_FILENAME = "auth-session.json";
+/** Env variable that overrides the session-file location. */
+declare const LOOMY_SESSION_FILE_ENV = "LOOMY_SESSION_FILE";
+//#endregion
+//#region src/drivers/loomy/auth.d.ts
+/** Normalized Loomy credential; only the session string and its refresh time. */
+interface LoomySession {
+  /** The bearer/token session value (32-hex in current builds). */
+  session: string;
+  /** Epoch milliseconds the desktop app last refreshed the sign-in. */
+  updatedAtMs?: number;
+}
+/** Read-only sign-in summary for status and doctor output. */
+interface LoomyAuthStatus {
+  state: 'signed-in' | 'signed-out';
+  updatedAtMs?: number;
+}
+/**
+ * Platform-default candidates for the Loomy desktop app's session file, in
+ * probe order. Windows probes Local then Roaming AppData; WSL probes the
+ * mounted Windows profile first.
+ */
+declare function defaultSessionCandidates(): string[];
+/** First platform-default candidate; see {@link defaultSessionCandidates}. */
+declare function defaultSessionPath(): string | undefined;
+/**
+ * Parse a Loomy session document. Only `session` and `updatedAt` are read;
+ * `phone` and any other PII are deliberately ignored.
+ */
+declare function parseLoomySession(text: string): LoomySession | undefined;
+/**
+ * Read-only Loomy session store. The session is long-lived and refreshed by
+ * the desktop app itself, so this store only resolves the configured file —
+ * no refresh lifecycle, no plugin-owned copy, no writes.
+ */
+declare class LoomySessionStore {
+  private pathOverride;
+  constructor(options?: {
+    sessionFile?: string;
+  });
+  /**
+   * Configuration precedence for the session file: the plugin's configured
+   * path, then the environment variable, then platform defaults.
+   */
+  private resolveCandidates;
+  private resolvePath;
+  /** Repoint the session file; a settings change applies on the next read. */
+  setSessionPath(path: string | undefined): void;
+  /** The resolved session-file path, for diagnostics. */
+  sessionFilePath(): string | undefined;
+  /** Read and parse the first session-file candidate that exists. */
+  private readSessionFile;
+  /** The credential to put on the wire; re-reads the file on every call. */
+  resolve(): Promise<LoomySession>;
+  /** Read-only sign-in summary; never throws. */
+  status(): Promise<LoomyAuthStatus>;
+  /** Loomy owns no plugin-side credential file, so logout is a no-op. */
+  logout(): Promise<void>;
+  /** Whether any session-file candidate exists as a regular file; diagnostics only. */
+  sessionFilePresent(): Promise<boolean>;
+}
+//#endregion
+//#region src/drivers/loomy/upstream.d.ts
+type LoomyChatResult = BridgeChatResult;
+/** Wire effort spellings the Loomy catalog declares. */
+type LoomyEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+/** One chat model the Loomy catalog describes, normalized for the adapter. */
+interface LoomyModelInfo {
+  id: string;
+  name: string;
+  contextWindow: number;
+  maxTokens: number;
+  supportsImages: boolean;
+  reasoning?: LoomyModelReasoning;
+}
+/** Reasoning metadata declared for one model. */
+interface LoomyModelReasoning {
+  supports: boolean;
+  /** Selectable wire effort values, e.g. `['none','low','medium','high','xhigh']`. */
+  supportedEfforts: readonly LoomyEffort[];
+  /** Default wire effort the platform applies. */
+  defaultEffort?: LoomyEffort;
+}
+/** Classify an upstream failure from its HTTP status and body excerpt. */
+declare function classifyLoomyError(status: number, body: string): BridgeErrorKind;
+/**
+ * Normalize an OpenAI chat-completions body for the Loomy upstream: flatten
+ * `tool_choice` to its string form (the object form returns 400). The
+ * endpoint natively accepts `role: "developer"`, non-streaming requests, and
+ * unknown fields, so nothing else is rewritten — the body otherwise passes
+ * through unchanged.
+ */
+declare function prepareLoomyChatBody(source: string): string;
+/**
+ * Upstream HTTP client for the Loomy imodel backend. One instance serves the
+ * whole driver; requests take the session explicitly so a desktop-app
+ * re-login applies on the next call.
+ */
+declare class LoomyUpstreamClient {
+  /** POST the chat endpoint; a successful answer is the raw (SSE) response. */
+  chatStream(session: LoomySession, bodyJson: string, signal?: AbortSignal): Promise<LoomyChatResult>;
+  /** GET the model catalog; chat models only, normalized for the adapter. */
+  fetchModels(session: LoomySession): Promise<readonly LoomyModelInfo[]>;
+}
+//#endregion
+//#region src/drivers/loomy/catalog.d.ts
+/** One model entry the adapter exposes. */
+type LoomyModelEntry = LoomyModelInfo;
+/**
+ * Static chat models observed on the imodel endpoint on 2026-09-16. The
+ * upstream refresh replaces this list at startup; it exists so the provider
+ * registers with a usable catalog even while the first fetch is in flight or
+ * offline.
+ *
+ * The two image-generation models (`doubao-seedream-5-lite`,
+ * `qwen-image-3.0-pro`, `type: "image"`) are intentionally absent — the
+ * chat-completions shim cannot serve them. Names are the platform's own
+ * display names (they already carry the rate/promo suffix, e.g.
+ * `Spark X2.5（限时免费）`), so no driver-side name decoration is applied.
+ */
+declare const FALLBACK_LOOMY_MODELS: readonly LoomyModelEntry[];
+/** Mutable Loomy catalog seeded with the fallback roster. */
+declare class LoomyCatalog extends Catalog<LoomyModelEntry> {
+  constructor();
+}
+//#endregion
+//#region src/drivers/loomy/adapter.d.ts
+/** Constructor dependencies. */
+interface LoomyAdapterOptions {
+  shim: BridgeShim;
+  /** Not read on the request path (auth rides the shim secret); kept for assembly parity. */
+  store: LoomySessionStore;
+  catalog: LoomyCatalog;
+  /** Resolve the durable attachment service at request time, when present. */
+  resolveAttachments?: () => AttachmentStore | undefined;
+}
+/** What {@link createLoomyAdapter} hands back. */
+type LoomyAdapter = BridgeAdapter;
+/** Assemble the Loomy adapter through the core seam. */
+declare function createLoomyAdapter(options: LoomyAdapterOptions): LoomyAdapter;
+//#endregion
+//#region src/drivers/loomy/shim.d.ts
+/** What the plugin needs from a running shim. */
+type LoomyShim = BridgeShim;
+/** Constructor dependencies. */
+interface LoomyShimOptions {
+  store: LoomySessionStore;
+  client: Pick<LoomyUpstreamClient, 'chatStream'>;
+  catalog: LoomyCatalog;
+  logger?: ShimLogger;
+}
+/** Start the Loomy loopback endpoint. */
+declare function createLoomyShim(options: LoomyShimOptions): LoomyShim;
+//#endregion
+//#region src/drivers/loomy/heartbeat.d.ts
+/** Basename of the host heartbeat file inside the Harness home. */
+declare const LOOMY_HOST_HEARTBEAT_FILENAME = ".loomy-host-heartbeat.json";
+/** On-disk shape of the heartbeat. */
+type LoomyHostHeartbeat = HostHeartbeat;
+/** Absolute path of the host heartbeat file. */
+declare const loomyHostHeartbeatPath: () => string;
+//#endregion
+//#region src/drivers/loomy/status-paths.d.ts
+/** Plugin-owned status endpoint consumed by the Loomy browser card. */
+declare const LOOMY_STATUS_PATH = "/plugins/dsh-llm-bridge/loomy/status";
+/** The JSON document the Loomy plugin card renders (the generic shape). */
+type LoomyWebStatus = DriverWebStatus;
+//#endregion
+//#region src/drivers/loomy/web-status.d.ts
+/** Constructor dependencies. */
+interface LoomyStatusRouteOptions {
+  store: LoomySessionStore;
+}
+/** Assemble the card's status document. */
+declare function loomyWebStatus(deps: LoomyStatusRouteOptions): Promise<LoomyWebStatus>;
+/** The status route's request handler, extracted so tests can mount it bare. */
+declare function loomyStatusHandler(deps: LoomyStatusRouteOptions): (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+/** Mount the GET status route on an optional webServer context. */
+declare function registerLoomyStatusRoute(ctx: Context, deps: LoomyStatusRouteOptions): void;
+//#endregion
 //#region src/index.d.ts
+/** Plugin configuration: one optional section per driver. */
+interface Config {
+  workbuddy?: Config$2;
+  loomy?: Config$1;
+}
+declare const Config: z<Config>;
 /** Stable Cordis plugin name. */
 declare const name = "llm-bridge";
-/** The model registry required before the provider can register. */
+/** The model registry required before either provider can register. */
 declare const inject: string[];
 /**
- * Compose the core mechanisms with the WorkBuddy driver and register the
- * `workbuddy` provider. Streaming, tool calls, compaction, and permissions
- * stay Harness-owned.
+ * Compose the core mechanisms with every shipped driver and register their
+ * providers (`workbuddy`, `loomy`). Streaming, tool calls, compaction, and
+ * permissions stay Harness-owned.
  */
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { Config, type Config as WorkBuddyConfig, FALLBACK_WORKBUDDY_MODELS, type UpstreamErrorKind, WORKBUDDY_AUTH_FILENAME, WORKBUDDY_AUTH_FILE_ENV, WORKBUDDY_DISPLAY_NAME, WORKBUDDY_HOST_HEARTBEAT_FILENAME, WORKBUDDY_PROVIDER, WORKBUDDY_SETTINGS_NS, WORKBUDDY_STATUS_PATH, WORKBUDDY_STREAM_IDLE_TIMEOUT_MS, type WorkBuddyAdapter, type WorkBuddyAdapterOptions, type WorkBuddyAuthStatus, WorkBuddyCatalog, type WorkBuddyChatResult, type WorkBuddyCredential, WorkBuddyCredentialStore, type WorkBuddyCredits, type WorkBuddyEffort, type WorkBuddyHostHeartbeat, type WorkBuddyModelBilling, type WorkBuddyModelInfo, type WorkBuddyModelReasoning, type WorkBuddyRefreshOutcome, type WorkBuddyShim, type WorkBuddyShimOptions, type WorkBuddyStatusRouteOptions, type WorkBuddyStoreOptions, WorkBuddyUpstreamClient, type WorkBuddyUpstreamModel, type WorkBuddyWebStatus, apply, applyWorkBuddyPlugin, classifyUpstreamError, clearHostHeartbeat, createWorkBuddyAdapter, createWorkBuddyShim, defaultDesktopAuthCandidates, defaultDesktopAuthPath, inject, isHeartbeatProcessAlive, name, normalizeCredits, parseWorkBuddyAuth, prepareChatBody, processStartTimeMs, readHostHeartbeat, regionOf, registerWorkBuddyStatusRoute, workBuddyStatusHandler, workBuddyWebStatus, workbuddyHostHeartbeatPath, workbuddyOwnAuthPath };
+export { Config, FALLBACK_LOOMY_MODELS, FALLBACK_WORKBUDDY_MODELS, LOOMY_DISPLAY_NAME, LOOMY_HOST_HEARTBEAT_FILENAME, LOOMY_PROVIDER, LOOMY_SESSION_FILENAME, LOOMY_SESSION_FILE_ENV, LOOMY_SETTINGS_NS, LOOMY_STATUS_PATH, LOOMY_STREAM_IDLE_TIMEOUT_MS, type LoomyAdapter, type LoomyAdapterOptions, type LoomyAuthStatus, LoomyCatalog, type LoomyChatResult, Config$1 as LoomyDriverConfig, type LoomyEffort, type LoomyHostHeartbeat, type LoomyModelEntry, type LoomyModelInfo, type LoomyModelReasoning, type LoomySession, LoomySessionStore, type LoomyShim, type LoomyShimOptions, type LoomyStatusRouteOptions, LoomyUpstreamClient, type LoomyWebStatus, type UpstreamErrorKind, WORKBUDDY_AUTH_FILENAME, WORKBUDDY_AUTH_FILE_ENV, WORKBUDDY_DISPLAY_NAME, WORKBUDDY_HOST_HEARTBEAT_FILENAME, WORKBUDDY_PROVIDER, WORKBUDDY_SETTINGS_NS, WORKBUDDY_STATUS_PATH, WORKBUDDY_STREAM_IDLE_TIMEOUT_MS, type WorkBuddyAdapter, type WorkBuddyAdapterOptions, type WorkBuddyAuthStatus, WorkBuddyCatalog, type WorkBuddyChatResult, type Config$2 as WorkBuddyConfig, type WorkBuddyCredential, WorkBuddyCredentialStore, type WorkBuddyCredits, type WorkBuddyEffort, type WorkBuddyHostHeartbeat, type WorkBuddyModelBilling, type WorkBuddyModelInfo, type WorkBuddyModelReasoning, type WorkBuddyRefreshOutcome, type WorkBuddyShim, type WorkBuddyShimOptions, type WorkBuddyStatusRouteOptions, type WorkBuddyStoreOptions, WorkBuddyUpstreamClient, type WorkBuddyUpstreamModel, type WorkBuddyWebStatus, apply, applyLoomyPlugin, applyWorkBuddyPlugin, classifyLoomyError, classifyUpstreamError, clearHostHeartbeat, createLoomyAdapter, createLoomyShim, createWorkBuddyAdapter, createWorkBuddyShim, defaultDesktopAuthCandidates, defaultDesktopAuthPath, defaultSessionCandidates, defaultSessionPath, inject, isHeartbeatProcessAlive, loomyHostHeartbeatPath, loomyStatusHandler, loomyWebStatus, name, normalizeCredits, parseLoomySession, parseWorkBuddyAuth, prepareChatBody, prepareLoomyChatBody, processStartTimeMs, readHostHeartbeat, regionOf, registerLoomyStatusRoute, registerWorkBuddyStatusRoute, workBuddyStatusHandler, workBuddyWebStatus, workbuddyHostHeartbeatPath, workbuddyOwnAuthPath };

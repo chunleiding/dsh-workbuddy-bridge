@@ -1,8 +1,8 @@
 {
   "name": "dsh-llm-bridge",
   "displayName": "DSH LLM Bridge",
-  "description": "复用闭源 AI Agent 的登录态与额度并接入 DeepSeek Harness；当前提供 WorkBuddy 驱动 — reuse closed AI agents' sign-in and quota in DeepSeek Harness; currently ships the WorkBuddy driver.",
-  "version": "0.3.2",
+  "description": "复用闭源 AI Agent 的登录态与额度并接入 DeepSeek Harness；当前提供 WorkBuddy 与 Loomy 两个驱动 — reuse closed AI agents' sign-in and quota in DeepSeek Harness; ships the WorkBuddy and Loomy drivers.",
+  "version": "0.4.0",
   "author": "corrinehu",
   "keywords": [
     "dsh-plugin",
@@ -10,7 +10,8 @@
     "deepseek",
     "model-provider",
     "llm-bridge",
-    "workbuddy"
+    "workbuddy",
+    "loomy"
   ],
   "type": "module",
   "engines": {

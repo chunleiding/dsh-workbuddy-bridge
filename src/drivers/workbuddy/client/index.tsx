@@ -1,10 +1,6 @@
-/** Browser half: WorkBuddy account status inside Plugin configuration. */
+/** Browser half: register the WorkBuddy account status card in Plugin configuration. */
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { WorkBuddyPluginCard } from './WorkBuddyPluginCard.tsx'
 import type { WorkBuddyPluginCardInjected } from './WorkBuddyPluginCard.tsx'
 import { en, zh } from './locales.ts'
@@ -17,44 +13,23 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-/** Stable browser-plugin name. */
-export const name = 'dsh-llm-bridge-client'
-/**
- * Client services required by the Plugin configuration contribution.
- *
- * DSH 0.1.2 removed `@deepseek-ai/dsh-client-runtime` (the package that used to
- * hold the browser `ClientContext` alias and the `slots` service). The services
- * this card relies on now come from narrower packages: the `slots` registry
- * moved to `@deepseek-ai/dsh-client-ui-renderer`, `locale` stayed in
- * `@deepseek-ai/dsh-client-locale`, and the `settings.plugin.item` slot is
- * declared by `@deepseek-ai/dsh-client-ui-settings-plugins`. All three are
- * named in the package's `dsh.client.inject` list, so cordis has activated
- * them before this plugin's fiber starts.
- */
-export const inject = ['slots', 'locale']
-
 /**
  * Register card copy and the WorkBuddy card under Plugin configuration.
  *
- * The entire body is wrapped so that a DSH slot-API breaking change (for
- * example the rc.6→rc.7 `id`→`key` / `order`→`priority` rename) degrades
- * to a `console.error` instead of throwing into the DSH loader and raising
- * the red "Failed to load plugins" banner. The host provider keeps working:
- * the `workbuddy` model channel is unaffected, and `dsh-llm-bridge
- * status` reports host health via the heartbeat file.
+ * The body is guarded so that a DSH slot-API breaking change (for example
+ * the rc.6→rc.7 `id`→`key` / `order`→`priority` rename) degrades to a
+ * `console.error` instead of throwing into the DSH loader and raising the
+ * red "Failed to load plugins" banner. The host providers keep working.
  *
  * NOTE: the try/catch boundary of this function is mirrored (duplicated) in
- * `tests/client-fallback.spec.ts`, because the real client entry imports
- * browser-only DSH packages that cannot load in the Node test environment.
- * That test therefore does not import this function — it replicates its
- * shape. If you change the guarded body or the `console.error` message here,
- * update the mirrored `apply()` in that spec too, or the fallback test will
- * silently diverge from this real implementation.
+ * `tests/client-fallback.spec.ts`, which cannot import browser-only DSH
+ * packages. If you change the guarded body or the `console.error` message
+ * here, update that mirror too.
  */
-export function apply(ctx: ClientContext): void {
+export function registerWorkBuddyCard(ctx: ClientContext): void {
   try {
     const namespace = 'settings.workbuddy'
-    ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-llm-bridge: settings copy')
+    ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-llm-bridge: workbuddy settings copy')
     const t = ctx.locale.bind(namespace) as WorkBuddyPluginCardInjected['t']
     ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
       name: 'settings.plugin.item',
@@ -63,8 +38,6 @@ export function apply(ctx: ClientContext): void {
       inject: (): WorkBuddyPluginCardInjected => ({ t }),
     }, WorkBuddyPluginCard))
   } catch (error: unknown) {
-    // Degrade silently on the page: the host provider still serves models.
-    // Developers see the full cause in the browser console; users see no banner.
-    console.error('[dsh-llm-bridge] client card failed to load (host provider unaffected):', error)
+    console.error('[dsh-llm-bridge] workbuddy client card failed to load (host provider unaffected):', error)
   }
 }

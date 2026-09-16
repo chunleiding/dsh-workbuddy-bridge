@@ -1,8 +1,10 @@
-/** WorkBuddy card contract: Node-free constants and types shared by the
- *  host and browser halves. */
+/** WorkBuddy card contract: the status route path and its document shape.
+ *  Node-free so the browser card can import it directly. */
 
-/** Plugin-owned status endpoint consumed by its browser half. */
-export const WORKBUDDY_STATUS_PATH = '/plugins/dsh-llm-bridge/status'
+import type { DriverWebStatus } from '../../core/status-types.ts'
+
+/** Plugin-owned status endpoint consumed by the WorkBuddy browser half. */
+export const WORKBUDDY_STATUS_PATH = '/plugins/dsh-llm-bridge/workbuddy/status'
 
 /** One billing package and its remaining credit. */
 export interface WorkBuddyWebCreditAccount {
@@ -25,11 +27,7 @@ export interface WorkBuddyWebModelBadge {
   free?: boolean
   /** Promotional badges, e.g. `限时免费`, `夜间折扣`. */
   badges?: readonly string[]
-  /**
-   * Credits multiplier in display form, e.g. `x0.79`. Unlike the model
-   * picker's copy, the card renders through the browser locale, so this value
-   * may be interpolated into a localized sentence rather than shown bare.
-   */
+  /** Credits multiplier in display form, e.g. `x0.79`. */
   credits?: string
 }
 
@@ -44,7 +42,10 @@ export type WorkBuddyWebStatus =
     expiresAt?: number
     credits?: WorkBuddyWebCredits
     creditsError?: string
-    /** Billing convenience facts for the models the plugin serves. */
     models?: readonly WorkBuddyWebModelBadge[]
   }
   | { status: 'error'; message: string }
+
+// Structural compatibility with the generic card document is intentional and
+// checked in the driver's web-status builder.
+export type { DriverWebStatus }

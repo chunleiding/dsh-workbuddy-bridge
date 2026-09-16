@@ -1,42 +1,58 @@
 /**
- * DSH LLM Bridge — reuse a closed AI agent's sign-in and quota inside DeepSeek
- * Harness.
+ * DSH LLM Bridge — reuse closed AI agents' existing sign-in and quota inside
+ * DeepSeek Harness.
  *
  * Architecture:
  * - `src/core/` holds the platform-agnostic mechanisms (credential lifecycle,
  *   model catalog, loopback shim, pi-ai adapter shell, SSE pipe, shared
- *   secret, heartbeat, status-route mounting). It contains no platform name.
+ *   secret, heartbeat, status route, status card) with no platform name.
  * - `src/drivers/<platform>/` holds every platform-private fact: credential
- *   discovery/parsing, token refresh, endpoints, request/response protocol
- *   conversion, model roster, quota, error classification, and UI branding.
+ *   discovery, token/session handling, endpoints, request/response protocol
+ *   conversion, model roster, quota, error classification, and branding.
  *
- * The package currently ships exactly one driver — WorkBuddy — and composes
- * it here into the DSH plugin. Future drivers (Trae, Qoder) get their own
- * directories; no multi-driver registry exists until a second real driver
- * validates the seam.
+ * This package currently ships two drivers — WorkBuddy and Loomy — and
+ * registers one provider per driver. Switching platform is just picking a
+ * model in the DSH model selector.
  *
  * @module dsh-llm-bridge
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { Config, applyWorkBuddyPlugin } from './drivers/workbuddy/plugin.ts'
-import type { WorkBuddyConfig } from './drivers/workbuddy/index.ts'
+import z from '@deepseek-ai/schemastery'
+import { applyLoomyPlugin } from './drivers/loomy/plugin.ts'
+import { applyWorkBuddyPlugin, Config as WorkBuddyDriverConfig } from './drivers/workbuddy/plugin.ts'
+import { Config as LoomyDriverConfig } from './drivers/loomy/plugin.ts'
+import type { Config as WorkBuddyDriverConfigType } from './drivers/workbuddy/plugin.ts'
+import type { Config as LoomyDriverConfigType } from './drivers/loomy/plugin.ts'
 
-// The public surface is the WorkBuddy driver surface today.
 export * from './drivers/workbuddy/index.ts'
-export type { WorkBuddyConfig as Config }
+export * from './drivers/loomy/index.ts'
+
+/** Plugin configuration: one optional section per driver. */
+export interface Config {
+  workbuddy?: WorkBuddyDriverConfigType
+  loomy?: LoomyDriverConfigType
+}
+
+// In this schemastery fork object properties are optional unless explicitly
+// marked required, so omitting a driver's section validates as {}.
+export const Config: z<Config> = z.object({
+  workbuddy: WorkBuddyDriverConfig,
+  loomy: LoomyDriverConfig,
+})
 
 /** Stable Cordis plugin name. */
 export const name = 'llm-bridge'
 
-/** The model registry required before the provider can register. */
+/** The model registry required before either provider can register. */
 export const inject = ['llm']
 
 /**
- * Compose the core mechanisms with the WorkBuddy driver and register the
- * `workbuddy` provider. Streaming, tool calls, compaction, and permissions
- * stay Harness-owned.
+ * Compose the core mechanisms with every shipped driver and register their
+ * providers (`workbuddy`, `loomy`). Streaming, tool calls, compaction, and
+ * permissions stay Harness-owned.
  */
 export function apply(ctx: Context, config: Config): void {
-  applyWorkBuddyPlugin(ctx, config)
+  applyWorkBuddyPlugin(ctx, config.workbuddy ?? {})
+  applyLoomyPlugin(ctx, config.loomy ?? {})
 }

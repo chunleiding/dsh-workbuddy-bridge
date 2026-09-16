@@ -15,5 +15,10 @@
     "types": ["node"]
   },
   "include": ["src", "tests"],
-  "exclude": ["src/drivers/workbuddy/client"]
+  "exclude": [
+    "src/client",
+    "src/core/client",
+    "src/drivers/workbuddy/client",
+    "src/drivers/loomy/client"
+  ]
 }

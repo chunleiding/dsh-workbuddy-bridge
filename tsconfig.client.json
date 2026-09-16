@@ -15,5 +15,10 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/drivers/workbuddy/client"]
+  "include": [
+    "src/client",
+    "src/core/client",
+    "src/drivers/workbuddy/client",
+    "src/drivers/loomy/client"
+  ]
 }

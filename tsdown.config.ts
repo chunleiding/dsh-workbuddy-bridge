@@ -24,7 +24,7 @@ export default [
   {
     entry: {
       index: 'src/index.ts',
-      bin: 'src/drivers/workbuddy/bin.ts',
+      bin: 'src/bin.ts',
     },
     outDir: 'lib',
     format: ['esm'],
@@ -50,7 +50,7 @@ export default [
     },
   },
   {
-    entry: { client: 'src/drivers/workbuddy/client/index.tsx' },
+    entry: { client: 'src/client/index.tsx' },
     outDir: 'lib',
     format: ['cjs'],
     platform: 'browser',
