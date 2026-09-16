@@ -88,7 +88,7 @@ refreshToken      : ~61 字符
 expiredAt         : 2026-09-30T05:35:25.367Z
 refreshExpiredAt  : 2027-03-15T05:35:25.367Z
 tokenReleaseAt    : 2026-09-16T05:35:25.429Z
-userId            : 4369917035163867
+userId            : <redacted>
 host              : https://api.trae.cn            ← 账号域（非模型域！）
 userRegion        : { region: "CN", _aiRegion: "CN" }
 account           : { scope: "marscode", userTag: "cn", email/avatar/... }
