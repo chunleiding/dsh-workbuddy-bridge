@@ -387,6 +387,47 @@ function sseFrame(payload: string): string {
 }
 
 /**
+ * Extract the server's own error text from an error envelope's `body`.
+ *
+ * A failed inference is an envelope like
+ * `{"statusCodeValue":400,"statusCode":"BAD_REQUEST",
+ *   "body":"{\"code\":\"400\",\"message\":\"[FAIL]node:… msg:…\"}"}`:
+ * the status line says nothing about which serving node failed or why — that
+ * rides the inner `message` — so it is surfaced verbatim. Bodies that are not
+ * JSON are returned as-is, since they are still the server's own wording.
+ */
+function envelopeErrorDetail(body: unknown): string | undefined {
+  if (typeof body !== 'string') return undefined
+  const inner = body.trim()
+  if (inner === '' || inner === '[DONE]') return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(inner)
+  } catch {
+    return inner.slice(0, ERROR_BODY_LIMIT)
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
+  const wrapped = parsed as Record<string, unknown>
+  const message = wrapped['message']
+  if (typeof message === 'string' && message !== '') return message
+  const nested = wrapped['error']
+  if (typeof nested === 'object' && nested !== null && !Array.isArray(nested)) {
+    const nestedMessage = (nested as Record<string, unknown>)['message']
+    if (typeof nestedMessage === 'string' && nestedMessage !== '') return nestedMessage
+  }
+  const code = wrapped['code']
+  return typeof code !== 'undefined' && String(code) !== '' ? `code ${String(code)}` : undefined
+}
+
+/** Build the error message for an envelope whose `statusCodeValue` failed. */
+function envelopeErrorMessage(status: number, document: Record<string, unknown>): string {
+  const reason = document['statusCode']
+  const base = `qoder upstream: frame status ${status} ${String(reason ?? '')}`.trim()
+  const detail = envelopeErrorDetail(document['body'])
+  return detail === undefined ? base : `${base}: ${detail}`
+}
+
+/**
  * Translate Qoder's enveloped SSE into ordinary OpenAI SSE.
  *
  * The core pipes a driver's response body verbatim, so the unwrapping has to
@@ -400,7 +441,9 @@ function sseFrame(payload: string): string {
  * A server-side error arriving mid-stream is surfaced as an OpenAI-style
  * `{"error": …}` frame followed by `[DONE]`, because by then the HTTP status
  * is long since committed and silence would look like a successful empty
- * answer.
+ * answer. The server's own wording is parsed out of the envelope `body`:
+ * the status line alone (`frame status 400 BAD_REQUEST`) hides which serving
+ * node failed and why.
  */
 export function translateQoderStream(
   api: QoderWasmApi,
@@ -437,9 +480,8 @@ export function translateQoderStream(
       const status = document['statusCodeValue']
       if (typeof status === 'number' && status !== 200) {
         finished = true
-        const message = document['statusCode']
         return sseFrame(JSON.stringify({
-          error: { message: `qoder upstream: frame status ${status} ${String(message ?? '')}`.trim(), type: 'server' },
+          error: { message: envelopeErrorMessage(status, document), type: 'server' },
         })) + sseFrame('[DONE]')
       }
       const inner = document['body'].trim()

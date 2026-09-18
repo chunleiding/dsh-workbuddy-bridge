@@ -250,6 +250,20 @@ describe('translateQoderStream', () => {
     expect(text.trimEnd().endsWith('data: [DONE]')).toBe(true)
   })
 
+  it('surfaces the server wording carried inside an error envelope body', async () => {
+    const stream = translateQoderStream(api, streamOf(
+      envelopeFrame(
+        JSON.stringify({ code: '400', message: '[FAIL]node:oa_qwen-plus-main msg:Execution failed: null' }),
+        400,
+        'BAD_REQUEST',
+      ),
+    ))
+    const text = await drain(stream)
+    expect(text).toContain('frame status 400 BAD_REQUEST')
+    expect(text).toContain('[FAIL]node:oa_qwen-plus-main msg:Execution failed: null')
+    expect(text.trimEnd().endsWith('data: [DONE]')).toBe(true)
+  })
+
   it('converts a mid-stream error chunk, because the status is already committed', async () => {
     const stream = translateQoderStream(api, streamOf(
       envelopeFrame('{"code":"101","message":"Signature invalid"}'),

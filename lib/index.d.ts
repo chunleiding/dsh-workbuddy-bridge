@@ -1364,7 +1364,9 @@ declare function modelKeyOf(bodyJson: string): string;
  * A server-side error arriving mid-stream is surfaced as an OpenAI-style
  * `{"error": …}` frame followed by `[DONE]`, because by then the HTTP status
  * is long since committed and silence would look like a successful empty
- * answer.
+ * answer. The server's own wording is parsed out of the envelope `body`:
+ * the status line alone (`frame status 400 BAD_REQUEST`) hides which serving
+ * node failed and why.
  */
 declare function translateQoderStream(api: QoderWasmApi, body: ReadableStream<Uint8Array> | null, logger?: ShimLogger): ReadableStream<Uint8Array>;
 /** Constructor dependencies. */
