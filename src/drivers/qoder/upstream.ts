@@ -10,20 +10,27 @@
  *
  * - **Request**: the wasm's `prepareInferRequest` returns an absolute URL (it
  *   appends `Encode=1` itself), the full COSY header set, and a *sealed* body.
- *   The model rides the `X-Model-Key` header; a `model` field in the body is
- *   echoed back decoratively and selects nothing.
+ *   The model rides the `X-Model-Key` header. The body itself is **not**
+ *   OpenAI-shaped: the legacy `agent_chat_generation` endpoint expects its own
+ *   chat envelope (`request_id`/`business`/`model_config`/`messages`/…). An
+ *   OpenAI-shaped body is accepted and signed but the serving node fails it
+ *   with `[FAIL]node:… Execution failed: null` — verified by diffing the
+ *   desktop client's own captured, decrypted traffic. {@link prepareQoderChatBody}
+ *   performs that translation.
  * - **Response**: `text/event-stream`, but not ordinary SSE. Each event's data
  *   is an *envelope* — `{headers, body: "<json string>", statusCodeValue,
  *   statusCode}` — and the OpenAI chunk lives inside the `body` string. The
- *   stream ends with an envelope whose `body` is the literal `"[DONE]"`,
- *   followed by an `event: finish` event carrying timings.
+ *   enclosed chunk is ordinary OpenAI (including streamed `tool_calls` and
+ *   `reasoning_content`); the stream ends with an envelope whose `body` is the
+ *   literal `"[DONE]"`, followed by an `event: finish` event carrying timings.
  * - Frames are **plain JSON**, not sealed, while `region/endpoints` and
  *   `model/list` *are* sealed. Every read therefore goes through
  *   {@link openServerPayload}'s try-then-fall-back, exactly as the app does.
  *
- * The wire is OpenAI-shaped, so the core's one-way forwarding contract holds:
- * the only work this driver does is unwrapping the envelope back into ordinary
- * `data: <chunk>` frames, which is what the shim pipes.
+ * The only work this driver does on the request side is translating the
+ * inbound OpenAI chat document into the platform's envelope; on the response
+ * side it unwraps envelopes back into ordinary `data: <chunk>` frames, which
+ * is what the shim pipes.
  *
  * @module dsh-llm-bridge/drivers/qoder/upstream
  */
@@ -48,6 +55,7 @@ import {
   QODER_GATEWAY_BASE,
   QODER_OPENAPI_BASE,
   QODER_SCENE,
+  QODER_TASK_ID,
 } from './meta.ts'
 import {
   loadQoderWasm,
@@ -309,26 +317,33 @@ export function mapQoderModel(row: unknown): QoderModelInfo | undefined {
 }
 
 /**
- * Normalize an OpenAI chat body for Qoder.
+ * Translate an inbound OpenAI chat document into Qoder's legacy chat envelope.
  *
- * Verified against the live endpoint: the deserializer is permissive — unknown
- * fields, `tool_choice`, `tools`, `max_completion_tokens` and a `developer`
- * role are all accepted with HTTP 200 — so the body is passed through almost
- * untouched rather than reduced to a whitelist, which would silently drop
- * capabilities the platform does support.
+ * The `agent_chat_generation` endpoint is not an OpenAI passthrough: the wasm
+ * signs whatever it is given, and an OpenAI-shaped document reaches the serving
+ * node only to die there with
+ * `[FAIL]node:oa_qwen-plus-main msg:Execution failed: null` (HTTP still 200).
+ * The desktop client instead sends the platform's own envelope. Every field
+ * below was verified against a captured-and-decrypted desktop request and then
+ * bisected against the live endpoint:
  *
- * Three changes are made:
+ * - `request_id`/`chat_record_id` share one fresh uuid and `request_set_id`
+ *   gets another; `session_id` is preserved when the caller supplied one (turn
+ *   grouping is a real semantic) and generated otherwise.
+ * - `business` is the single load-bearing object: omitting it reproduces the
+ *   node failure exactly, while an empty object already succeeds. It is filled
+ *   with the client's own identity/telemetry shape.
+ * - `model_config.key` names the model in the body; the same key is also what
+ *   {@link modelKeyOf} hands to the wasm for the `X-Model-Key` header.
+ * - `messages` stay OpenAI-shaped (string or content-part arrays, system and
+ *   tool-call history included — all verified); `role: "developer"` is
+ *   rewritten to `"system"` for the same reason as before.
+ * - OpenAI generation knobs move under `parameters`; `tools`/`tool_choice`
+ *   stay top-level, exactly where the client itself puts them.
  *
- * 1. `stream` is forced true; the endpoint only answers in SSE.
- * 2. `request_id` and `task_id` are stamped fresh. The wasm already gives every
- *    signature its own nonce (which is what the server's duplicate detection
- *    keys on), but carrying a caller-supplied constant here reuses a request
- *    identity across calls and buys nothing. `session_id` is preserved when
- *    present, because grouping is a real semantic, and generated otherwise.
- * 3. `role: "developer"` is rewritten to `"system"`. The endpoint accepts
- *    `developer` without complaining, which is exactly why this matters: an
- *    unrecognized role could be dropped silently, and the dropped message would
- *    be the system prompt. `system` is the spelling that is certainly honored.
+ * Everything else the inbound document carries is deliberately not forwarded:
+ * the envelope is a different schema, and silently passing OpenAI-only fields
+ * through would buy nothing the node understands.
  */
 export function prepareQoderChatBody(source: string): string {
   let body: unknown
@@ -339,30 +354,131 @@ export function prepareQoderChatBody(source: string): string {
   }
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return source
   const document = body as Record<string, unknown>
-  document['stream'] = true
-  document['request_id'] = randomUUID()
-  document['task_id'] = randomUUID()
-  if (typeof document['session_id'] !== 'string' || document['session_id'] === '') {
-    document['session_id'] = randomUUID()
+
+  const messages = Array.isArray(document['messages']) ? document['messages'] : []
+  for (const message of messages) {
+    if (typeof message !== 'object' || message === null || Array.isArray(message)) continue
+    const wrapped = message as Record<string, unknown>
+    if (wrapped['role'] === 'developer') wrapped['role'] = 'system'
   }
-  const messages = document['messages']
-  if (Array.isArray(messages)) {
-    for (const message of messages) {
-      if (typeof message !== 'object' || message === null || Array.isArray(message)) continue
-      const wrapped = message as Record<string, unknown>
-      if (wrapped['role'] === 'developer') wrapped['role'] = 'system'
-    }
+
+  const model = typeof document['model'] === 'string' && document['model'] !== ''
+    ? document['model']
+    : QODER_AUTO_MODEL
+  const requestId = randomUUID()
+  const sessionId = typeof document['session_id'] === 'string' && document['session_id'] !== ''
+    ? document['session_id']
+    : randomUUID()
+  const businessName = businessNameOf(messages)
+
+  const envelope: Record<string, unknown> = {
+    request_id: requestId,
+    request_set_id: randomUUID(),
+    chat_record_id: requestId,
+    session_id: sessionId,
+    stream: true,
+    chat_task: 'FREE_INPUT',
+    is_reply: true,
+    is_retry: false,
+    source: 1,
+    version: '3',
+    agent_id: QODER_AGENT_ID,
+    task_id: QODER_TASK_ID,
+    model_config: { key: model, source: 'system' },
+    business: {
+      product: QODER_CLIENT_METADATA.business_product,
+      version: QODER_COSY_VERSION,
+      type: QODER_CLIENT_METADATA.business_type,
+      id: randomUUID(),
+      ...businessName === undefined ? {} : { name: businessName },
+      begin_at: Date.now(),
+      stage: 'start',
+    },
+    messages,
   }
-  return JSON.stringify(document)
+
+  const parameters = parametersOf(document)
+  if (parameters !== undefined) envelope['parameters'] = parameters
+  if (Array.isArray(document['tools'])) envelope['tools'] = document['tools']
+  if (document['tool_choice'] !== undefined) envelope['tool_choice'] = document['tool_choice']
+
+  return JSON.stringify(envelope)
 }
 
-/** The catalog key a chat body selects. */
+/**
+ * The OpenAI generation knobs the chat node accepts inside `parameters`.
+ *
+ * Only the fields the client itself sends are mapped; `max_completion_tokens`
+ * is the newer spelling of `max_tokens`.
+ */
+const SCALAR_PARAMETER_FIELDS = [
+  'temperature',
+  'top_p',
+  'stop',
+  'presence_penalty',
+  'frequency_penalty',
+  'reasoning_effort',
+] as const
+
+/** Collect the supported generation parameters, or undefined when none exist. */
+function parametersOf(document: Record<string, unknown>): Record<string, unknown> | undefined {
+  const parameters: Record<string, unknown> = {}
+  const maxTokens = document['max_completion_tokens'] ?? document['max_tokens']
+  if (typeof maxTokens === 'number' && Number.isFinite(maxTokens)) {
+    parameters['max_tokens'] = maxTokens
+  }
+  for (const field of SCALAR_PARAMETER_FIELDS) {
+    const value = document[field]
+    if (typeof value === 'number' || typeof value === 'string'
+      || (Array.isArray(value) && value.every(item => typeof item === 'string'))) {
+      parameters[field] = value
+    }
+  }
+  return Object.keys(parameters).length === 0 ? undefined : parameters
+}
+
+/**
+ * The `business.name` telemetry the client fills with the turn's first user
+ * text. Returns undefined when there is none; only plain textual content is
+ * used and the value is truncated, mirroring the client.
+ */
+function businessNameOf(messages: readonly unknown[]): string | undefined {
+  for (const message of messages) {
+    if (typeof message !== 'object' || message === null || Array.isArray(message)) continue
+    const wrapped = message as Record<string, unknown>
+    if (wrapped['role'] !== 'user') continue
+    const content = wrapped['content']
+    if (typeof content === 'string' && content !== '') return content.slice(0, 30)
+    if (Array.isArray(content)) {
+      for (const part of content) {
+        if (typeof part !== 'object' || part === null || Array.isArray(part)) continue
+        const text = (part as Record<string, unknown>)['text']
+        if (typeof text === 'string' && text !== '') return text.slice(0, 30)
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * The catalog key a chat body selects.
+ *
+ * Reads the inbound OpenAI document's top-level `model`; after
+ * {@link prepareQoderChatBody} the same key lives at `model_config.key`, so
+ * that spelling is accepted too.
+ */
 export function modelKeyOf(bodyJson: string): string {
   try {
     const parsed: unknown = JSON.parse(bodyJson)
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      const model = (parsed as Record<string, unknown>)['model']
+      const document = parsed as Record<string, unknown>
+      const model = document['model']
       if (typeof model === 'string' && model !== '') return model
+      const modelConfig = document['model_config']
+      if (typeof modelConfig === 'object' && modelConfig !== null && !Array.isArray(modelConfig)) {
+        const nested = (modelConfig as Record<string, unknown>)['key']
+        if (typeof nested === 'string' && nested !== '') return nested
+      }
     }
   } catch {
     // An unparsable body cannot name a model; fall through to auto.

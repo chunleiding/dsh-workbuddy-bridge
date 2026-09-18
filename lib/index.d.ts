@@ -1326,29 +1326,42 @@ declare function classifyQoderError(status: number, body: string): BridgeErrorKi
 /** Project one catalog row into a model record, or undefined when unusable. */
 declare function mapQoderModel(row: unknown): QoderModelInfo | undefined;
 /**
- * Normalize an OpenAI chat body for Qoder.
+ * Translate an inbound OpenAI chat document into Qoder's legacy chat envelope.
  *
- * Verified against the live endpoint: the deserializer is permissive — unknown
- * fields, `tool_choice`, `tools`, `max_completion_tokens` and a `developer`
- * role are all accepted with HTTP 200 — so the body is passed through almost
- * untouched rather than reduced to a whitelist, which would silently drop
- * capabilities the platform does support.
+ * The `agent_chat_generation` endpoint is not an OpenAI passthrough: the wasm
+ * signs whatever it is given, and an OpenAI-shaped document reaches the serving
+ * node only to die there with
+ * `[FAIL]node:oa_qwen-plus-main msg:Execution failed: null` (HTTP still 200).
+ * The desktop client instead sends the platform's own envelope. Every field
+ * below was verified against a captured-and-decrypted desktop request and then
+ * bisected against the live endpoint:
  *
- * Three changes are made:
+ * - `request_id`/`chat_record_id` share one fresh uuid and `request_set_id`
+ *   gets another; `session_id` is preserved when the caller supplied one (turn
+ *   grouping is a real semantic) and generated otherwise.
+ * - `business` is the single load-bearing object: omitting it reproduces the
+ *   node failure exactly, while an empty object already succeeds. It is filled
+ *   with the client's own identity/telemetry shape.
+ * - `model_config.key` names the model in the body; the same key is also what
+ *   {@link modelKeyOf} hands to the wasm for the `X-Model-Key` header.
+ * - `messages` stay OpenAI-shaped (string or content-part arrays, system and
+ *   tool-call history included — all verified); `role: "developer"` is
+ *   rewritten to `"system"` for the same reason as before.
+ * - OpenAI generation knobs move under `parameters`; `tools`/`tool_choice`
+ *   stay top-level, exactly where the client itself puts them.
  *
- * 1. `stream` is forced true; the endpoint only answers in SSE.
- * 2. `request_id` and `task_id` are stamped fresh. The wasm already gives every
- *    signature its own nonce (which is what the server's duplicate detection
- *    keys on), but carrying a caller-supplied constant here reuses a request
- *    identity across calls and buys nothing. `session_id` is preserved when
- *    present, because grouping is a real semantic, and generated otherwise.
- * 3. `role: "developer"` is rewritten to `"system"`. The endpoint accepts
- *    `developer` without complaining, which is exactly why this matters: an
- *    unrecognized role could be dropped silently, and the dropped message would
- *    be the system prompt. `system` is the spelling that is certainly honored.
+ * Everything else the inbound document carries is deliberately not forwarded:
+ * the envelope is a different schema, and silently passing OpenAI-only fields
+ * through would buy nothing the node understands.
  */
 declare function prepareQoderChatBody(source: string): string;
-/** The catalog key a chat body selects. */
+/**
+ * The catalog key a chat body selects.
+ *
+ * Reads the inbound OpenAI document's top-level `model`; after
+ * {@link prepareQoderChatBody} the same key lives at `model_config.key`, so
+ * that spelling is accepted too.
+ */
 declare function modelKeyOf(bodyJson: string): string;
 /**
  * Translate Qoder's enveloped SSE into ordinary OpenAI SSE.

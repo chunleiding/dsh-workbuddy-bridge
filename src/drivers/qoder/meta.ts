@@ -56,6 +56,9 @@ export const QODER_CLIENT_METADATA = {
 /** Agent id the inference endpoint is scoped to. */
 export const QODER_AGENT_ID = 'agent_common'
 
+/** Task id the desktop client pairs with `agent_common` in the chat envelope. */
+export const QODER_TASK_ID = 'common'
+
 /** Model key standing in for "let Qoder pick", valid for every scene. */
 export const QODER_AUTO_MODEL = 'auto'
 

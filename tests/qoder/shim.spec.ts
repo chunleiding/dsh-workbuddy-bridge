@@ -87,7 +87,7 @@ describe('Qoder shim', () => {
 
     const forwarded = JSON.parse(bodies[0]!) as Record<string, unknown>
     expect(forwarded['stream']).toBe(true)
-    expect(forwarded['model']).toBe('dmodel')
+    expect((forwarded['model_config'] as { key: string }).key).toBe('dmodel')
     expect(typeof forwarded['request_id']).toBe('string')
     expect((forwarded['messages'] as { role: string }[])[0]?.role).toBe('system')
     expect(forwarded['tools']).toEqual([{ type: 'function', function: { name: 'f' } }])
@@ -187,6 +187,6 @@ describe('Qoder shim', () => {
     const response = await post(shim, { model: 'auto', messages: [{ role: 'user', content: 'hi' }] })
     expect(response.status).toBe(200)
     const forwarded = JSON.parse(bodies[0]!) as Record<string, unknown>
-    expect(forwarded['model']).toBe('qmodel_38max')
+    expect((forwarded['model_config'] as { key: string }).key).toBe('qmodel_38max')
   })
 })

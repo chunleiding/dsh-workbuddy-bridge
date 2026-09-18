@@ -25,7 +25,7 @@ afterEach(() => {
 })
 
 describe('prepareQoderChatBody', () => {
-  it('forces streaming and stamps a fresh request identity per call', () => {
+  it('wraps the OpenAI document in the legacy chat envelope with fresh identities', () => {
     const source = JSON.stringify({
       model: 'dmodel',
       stream: false,
@@ -36,12 +36,42 @@ describe('prepareQoderChatBody', () => {
     // The endpoint answers only in SSE; a non-stream request is normalized.
     expect(first.stream).toBe(true)
     expect(typeof first.request_id).toBe('string')
-    expect(typeof first.task_id).toBe('string')
+    expect(typeof first.request_set_id).toBe('string')
+    expect(first.chat_record_id).toBe(first.request_id)
     expect(typeof first.session_id).toBe('string')
     // A reused request identity is what the server's dedup window rejects.
     expect(first.request_id).not.toBe(second.request_id)
-    expect(first.task_id).not.toBe(second.task_id)
-    expect(first.model).toBe('dmodel')
+    expect(first.request_set_id).not.toBe(second.request_set_id)
+    // Model is carried as model_config.key, not a top-level OpenAI field.
+    expect(first.model_config.key).toBe('dmodel')
+    expect(first.model).toBeUndefined()
+  })
+
+  it('sends the load-bearing business object with client identity telemetry', () => {
+    const out = JSON.parse(prepareQoderChatBody(JSON.stringify({
+      model: 'dmodel',
+      messages: [{ role: 'user', content: '只回复四个字：验证成功' }],
+    })))
+    // Without business the serving node dies with "Execution failed: null".
+    expect(out.business).toMatchObject({
+      product: 'cli',
+      type: 'agent',
+      stage: 'start',
+      name: '只回复四个字：验证成功',
+    })
+    expect(typeof out.business.id).toBe('string')
+    expect(typeof out.business.begin_at).toBe('number')
+  })
+
+  it('uses a fixed agent/task pair and the desktop envelope constants', () => {
+    const out = JSON.parse(prepareQoderChatBody(JSON.stringify({ messages: [] })))
+    expect(out.agent_id).toBe('agent_common')
+    expect(out.task_id).toBe('common')
+    expect(out.chat_task).toBe('FREE_INPUT')
+    expect(out.is_reply).toBe(true)
+    expect(out.is_retry).toBe(false)
+    expect(out.source).toBe(1)
+    expect(out.version).toBe('3')
   })
 
   it('keeps a caller-supplied session id, because grouping is a real semantic', () => {
@@ -60,22 +90,48 @@ describe('prepareQoderChatBody', () => {
     expect(out.messages[1].role).toBe('user')
   })
 
-  it('passes unknown fields and tool surface through untouched', () => {
+  it('moves OpenAI generation knobs into parameters, keeping newer spellings', () => {
     const body = {
-      model: 'auto',
+      model: 'dmodel',
       messages: [],
-      tools: [{ type: 'function', function: { name: 'get_weather' } }],
-      tool_choice: 'auto',
       max_completion_tokens: 512,
       temperature: 0.2,
-      something_qoder_may_not_know: { nested: true },
+      reasoning_effort: 'low',
+      stop: ['STOP'],
     }
     const out = JSON.parse(prepareQoderChatBody(JSON.stringify(body)))
-    expect(out.tools).toEqual(body.tools)
+    expect(out.parameters).toEqual({
+      max_tokens: 512,
+      temperature: 0.2,
+      reasoning_effort: 'low',
+      stop: ['STOP'],
+    })
+  })
+
+  it('omits parameters entirely when the caller sends no generation knobs', () => {
+    const out = JSON.parse(prepareQoderChatBody(JSON.stringify({ model: 'dmodel', messages: [] })))
+    expect(out.parameters).toBeUndefined()
+  })
+
+  it('keeps the tool surface top-level, where the serving node reads it', () => {
+    const tools = [{ type: 'function', function: { name: 'get_weather' } }]
+    const out = JSON.parse(prepareQoderChatBody(JSON.stringify({
+      model: 'auto',
+      messages: [],
+      tools,
+      tool_choice: 'auto',
+    })))
+    expect(out.tools).toEqual(tools)
     expect(out.tool_choice).toBe('auto')
-    expect(out.max_completion_tokens).toBe(512)
-    expect(out.temperature).toBe(0.2)
-    expect(out.something_qoder_may_not_know).toEqual({ nested: true })
+  })
+
+  it('does not forward unrelated OpenAI-only fields into the envelope', () => {
+    const out = JSON.parse(prepareQoderChatBody(JSON.stringify({
+      model: 'dmodel',
+      messages: [],
+      something_openai_only: { nested: true },
+    })))
+    expect(out.something_openai_only).toBeUndefined()
   })
 
   it('returns anything unparsable or non-object verbatim', () => {
@@ -86,8 +142,9 @@ describe('prepareQoderChatBody', () => {
 })
 
 describe('modelKeyOf', () => {
-  it('reads the selected model and falls back to auto', () => {
+  it('reads the selected model from a raw body or an envelope and falls back to auto', () => {
     expect(modelKeyOf('{"model":"mmodel"}')).toBe('mmodel')
+    expect(modelKeyOf('{"model_config":{"key":"enveloped"}}')).toBe('enveloped')
     expect(modelKeyOf('{"model":""}')).toBe('auto')
     expect(modelKeyOf('{"messages":[]}')).toBe('auto')
     expect(modelKeyOf('not json')).toBe('auto')
